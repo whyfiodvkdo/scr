@@ -1,5 +1,5 @@
 -- ⚙️ Настройки скрипта
-local MESSAGE_DURATION = 4           -- Время отображения сообщения (секунды)
+local MESSAGE_DURATION = 3 -- Время отображения сообщения (секунды)
 
 -- 🛡️ Защита от повторного запуска
 if script.Parent then return end
@@ -49,7 +49,7 @@ local function toggleModule()
     )
 end
 
--- ✏️ Создание/обновление визуальной подсказки
+-- ✏️ Создание визуальной подсказки
 local function createHighlight(targetCharacter)
     if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
 
@@ -57,22 +57,53 @@ local function createHighlight(targetCharacter)
     box.Name = "G_Cheat_Highlight"
     box.AlwaysOnTop = true
     box.ZIndex = 10
-    box.Color3 = Color3.fromRGB(0, 255, 0)   -- Основной цвет рамки
-    box.Transparency = 0.7                    -- Полупрозрачность
+    box.Color3 = Color3.fromRGB(0, 255, 0)   
+    box.Transparency = 0.7                    
     box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
-    box.Adornee = targetCharacter             -- Прикрепляем рамку к персонажу
-
+    box.Adornee = targetCharacter             
+    
     return box
 end
 
+-- 🗨️ Вывод имени игрока рядом с ним
+local function showNameTag(character, nameText)
+    if not character then return nil end
+
+    local tag = Instance.new("Hint")       
+    tag.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tag.Outline = false                   
+    tag.Text = "[DEBUG] " .. nameText
+    tag.Parent = character                
+    wait(MESSAGE_DURATION)           
+    tag:Destroy()                        
+end
+
 -- 🕸️ Динамическое создание скрытого инструмента
+-- Это ключевой момент: мы создаем Tool без ручки внутри Backpack,
+-- который будет отправлять события на сервер при любом нажатии мыши.
 local tool = Instance.new("Tool")
-tool.RequiresHandle = false -- Инструмент без ручки
+tool.RequiresHandle = false -- Инструмент без видимой части
 tool.CanBeDropped = false
 tool.Name = "AdminActions"
 tool.Parent = player.Backpack
 
--- Клиентская логика (LocalScript внутри Tool)
+-- Серверная логика (Script внутри Tool). Она выполнится на сервере!
+local serverLogic = Instance.new("Script", tool)
+serverLogic.Source = [[
+    -- Обработчик события Activated (отправляется на сервер при клике по инструменту)
+    script.Parent.Activated:Connect(function()
+        -- Получаем цель напрямую из Character владельца инструмента
+        local target = script.Parent.Parent.Character
+        
+        -- Проверяем наличие Humanoid
+        local humanoid = target:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.Health > 0 then
+            humanoid.Health = 0
+        end
+    end)
+]]
+
+-- Клиентская логика (LocalScript внутри Tool), которая управляет подсветкой
 local clientLogic = Instance.new("LocalScript", tool)
 clientLogic.Source = [[
     local UserInputService = game:GetService("UserInputService")
@@ -97,19 +128,6 @@ clientLogic.Source = [[
         box.Adornee = targetCharacter             
         
         return box
-    end
-
-    -- 🗨️ Вывод имени игрока рядом с ним
-    local function showNameTag(character, nameText)
-        if not character then return nil end
-
-        local tag = Instance.new("Hint")       
-        tag.TextColor3 = Color3.fromRGB(255, 255, 255)
-        tag.Outline = false                   
-        tag.Text = "[DEBUG] " .. nameText
-        tag.Parent = character                
-        wait(MESSAGE_DURATION)           
-        tag:Destroy()                        
     end
 
     -- 🕸️ Отслеживание мыши для выбора цели
@@ -139,20 +157,6 @@ clientLogic.Source = [[
             highlightObject:Destroy()
             highlightObject = nil
             currentTarget = nil
-        end
-    end)
-]]
-
--- Серверная логика (Script внутри Tool)
-local serverLogic = Instance.new("Script", tool)
-serverLogic.Source = [[
-    -- Обработчик события Activated (отправляется на сервер при любом клике по инструменту)
-    script.Parent.Activated:Connect(function()
-        local target = script.Parent.Parent.Character -- Backpack -> Player -> Character
-        local humanoid = target:FindFirstChildOfClass("Humanoid")
-        
-        if humanoid and humanoid.Health > 0 then
-            humanoid.Health = 0
         end
     end)
 ]]
