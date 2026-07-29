@@ -1,31 +1,32 @@
--- Improved admin tool creator
--- Place this Script in ServerScriptService. It will create a client LocalScript + a server Script and a RemoteEvent inside a Tool for each player that joins.
+-- scr.lua
+-- Server-side deployer: создаёт для каждого игрока Tool с LocalScript + RemoteEvent + server Script.
+-- Поместите этот файл в ServerScriptService.
 
-local MESSAGE_DURATION = 4 -- seconds shown for notifications
+local MESSAGE_DURATION = 4 -- seconds for client notifications
 
--- List of allowed UserIds who can use the tool. Leave empty {} to allow everyone (not recommended).
+-- Список UserId, которым разрешено использовать инструменты. Оставьте пустым {} для разрешения всем (не рекомендовано).
 local ADMINS = {
-    -- 12345678, -- add numeric user ids here
+    -- 12345678,
 }
 
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
 
--- Utility: convert a Lua table of numbers to a Lua literal string (e.g. {123,456})
 local function tableToLuaLiteral(t)
     local parts = {}
-    for _,v in ipairs(t) do
+    for _, v in ipairs(t) do
         table.insert(parts, tostring(v))
     end
     return "{" .. table.concat(parts, ",") .. "}"
 end
 
--- The LocalScript that will run on the client. It is embedded here as a string so each player's Tool gets its own LocalScript.
-local localScriptSource = [[
+-- Шаблон LocalScript (будет добавлен в Tool, выполняется на клиенте)
+local localScriptTemplate = [[
 local MESSAGE_DURATION = %d
 local tool = script.Parent
-local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 
@@ -35,15 +36,16 @@ local enabled = true
 
 local function safeNotify(text)
     pcall(function()
-        game.StarterGui:SetCore("SendNotification", {Title = "AdminActions", Text = text, Duration = math.clamp(MESSAGE_DURATION, 1, 10)})
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "AdminActions",
+            Text = text,
+            Duration = math.clamp(MESSAGE_DURATION or 3, 1, 10),
+        })
     end)
 end
 
 local function createHighlight(targetCharacter)
-    if not targetCharacter or not targetCharacter.PrimaryPart then
-        return
-    end
-
+    if not targetCharacter or not targetCharacter.PrimaryPart then return end
     if highlightObject then
         highlightObject:Destroy()
         highlightObject = nil
@@ -77,7 +79,7 @@ mouse.TargetChanged:Connect(function(newTarget)
     if newTarget and newTarget.Parent then
         local char = newTarget.Parent
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Parent and hum.Parent:IsA("Model") then
+        if hum and char:IsA("Model") then
             currentTarget = char
             createHighlight(char)
             local plr = Players:GetPlayerFromCharacter(char)
@@ -94,7 +96,6 @@ mouse.TargetChanged:Connect(function(newTarget)
     clearHighlight()
 end)
 
--- Fire server with the selected target name when tool activated
 tool.Activated:Connect(function()
     if not enabled then
         safeNotify("Tool is disabled")
@@ -103,7 +104,7 @@ tool.Activated:Connect(function()
 
     if currentTarget and currentTarget:FindFirstChildOfClass("Humanoid") and currentTarget.PrimaryPart then
         local plr = Players:GetPlayerFromCharacter(currentTarget)
-        local targetName = plr and plr.Name or currentTarget.Name
+        local targetName = (plr and plr.Name) or currentTarget.Name or ""
         local remote = tool:FindFirstChild("AdminActionEvent")
         if remote and remote:IsA("RemoteEvent") then
             remote:FireServer(targetName)
@@ -115,7 +116,6 @@ tool.Activated:Connect(function()
     end
 end)
 
--- Toggle enabled/disabled with G
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.KeyCode == Enum.KeyCode.G then
@@ -127,22 +127,19 @@ UserInputService.InputBegan:Connect(function(input, processed)
     end
 end)
 
--- Cleanup highlight when unequipped / on destroy
 tool.Unequipped:Connect(function()
     clearHighlight()
     currentTarget = nil
 end)
 
--- When the client destroys the tool (e.g., player leaves), cleanup
 script.Destroying:Connect(function()
     clearHighlight()
 end)
 ]]
 
--- The server-side snippet that will be placed inside each Tool.
--- It expects to receive (player, targetName) via the RemoteEvent: AdminActionEvent
+-- Создаёт серверный Script (обработчик) как строку
 local function makeServerScriptSource(adminsLiteral)
-    local src = [[
+    return [[
 local ADMINS = ]] .. adminsLiteral .. [[
 
 local Players = game:GetService("Players")
@@ -151,31 +148,36 @@ local function isAdmin(userId)
     if #ADMINS == 0 then
         return true -- permissive when no admins listed
     end
-    for _,id in ipairs(ADMINS) do
+    for _, id in ipairs(ADMINS) do
         if id == userId then return true end
     end
     return false
 end
 
 local tool = script.Parent
-local remote = tool:WaitForChild("AdminActionEvent")
+local remote = tool:WaitForChild("AdminActionEvent", 5)
 
--- Sanity: only process requests from players who currently have the tool equipped (basic check)
+if not remote or not remote:IsA("RemoteEvent") then
+    warn("[AdminActions] RemoteEvent AdminActionEvent not found in tool")
+    return
+end
+
 remote.OnServerEvent:Connect(function(player, targetName)
+    -- Basic validation
+    if typeof(targetName) ~= "string" then return end
     if not player or not player.UserId then return end
 
     -- Permission check
     if not isAdmin(player.UserId) then
-        warn("[AdminActions] Player " .. player.Name .. " ("..player.UserId..") attempted to use admin tool but is not authorized")
+        warn("[AdminActions] Unauthorized use by " .. tostring(player.Name) .. " (" .. tostring(player.UserId) .. ")")
         return
     end
 
-    if typeof(targetName) ~= "string" then return end
-
-    local targetPlayer = Players:FindFirstChild(targetName)
+    -- Find target player by name
+    local targetPlayer = game:GetService("Players"):FindFirstChild(targetName)
     if not targetPlayer then
-        -- try to match by character name fallback
-        for _,p in ipairs(Players:GetPlayers()) do
+        -- fallback: try to match character name
+        for _, p in ipairs(Players:GetPlayers()) do
             if p.Character and p.Character.Name == targetName then
                 targetPlayer = p
                 break
@@ -186,18 +188,24 @@ remote.OnServerEvent:Connect(function(player, targetName)
     if targetPlayer and targetPlayer.Character then
         local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
         if humanoid and humanoid.Health > 0 then
+            -- Setting Health to 0 is one approach; consider :TakeDamage for better events
             humanoid.Health = 0
         end
     end
 end)
 ]]
-    return src
 end
 
--- Create a Tool for a player
 local function createToolForPlayer(player)
-    -- Ensure Backpack exists
-    local backpack = player:WaitForChild("Backpack")
+    if not player then return end
+    -- Avoid creating multiple tools
+    if player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("AdminActions") then
+        return
+    end
+
+    -- Wait for Backpack
+    local backpack = player:WaitForChild("Backpack", 10)
+    if not backpack then return end
 
     local tool = Instance.new("Tool")
     tool.Name = "AdminActions"
@@ -205,45 +213,41 @@ local function createToolForPlayer(player)
     tool.CanBeDropped = false
     tool.Parent = backpack
 
-    -- RemoteEvent for client -> server communication
     local remote = Instance.new("RemoteEvent")
     remote.Name = "AdminActionEvent"
     remote.Parent = tool
 
-    -- Server script (will run on the server)
     local serverScript = Instance.new("Script")
     serverScript.Name = "ServerHandler"
     serverScript.Source = makeServerScriptSource(tableToLuaLiteral(ADMINS))
     serverScript.Parent = tool
 
-    -- LocalScript (runs on client)
     local localScript = Instance.new("LocalScript")
     localScript.Name = "ClientHandler"
-    localScript.Source = string.format(localScriptSource, MESSAGE_DURATION)
+    localScript.Source = string.format(localScriptTemplate, MESSAGE_DURATION)
     localScript.Parent = tool
 
-    -- Optional: tag/attribute for easy identification
     tool:SetAttribute("CreatedBy", "scr.lua")
 end
 
 Players.PlayerAdded:Connect(function(player)
-    -- create the tool when the player fully loads
+    -- Small delay to ensure player is fully initialized
     spawn(function()
-        -- small wait to ensure Backpack exists
-        repeat wait() until player:FindFirstChild("Backpack")
-        createToolForPlayer(player)
+        if not player then return end
+        -- Wait until Backpack exists
+        local ok = pcall(function()
+            player:WaitForChild("Backpack", 15)
+        end)
+        if ok then
+            createToolForPlayer(player)
+        end
     end)
 end)
 
--- For players already in the game when the script runs (during development/test)
-for _,player in ipairs(Players:GetPlayers()) do
+-- For testing when script starts mid-game
+for _, player in ipairs(Players:GetPlayers()) do
     spawn(function()
-        if player:FindFirstChild("Backpack") then
-            createToolForPlayer(player)
-        else
-            repeat wait() until player:FindFirstChild("Backpack")
-            createToolForPlayer(player)
-        end
+        createToolForPlayer(player)
     end)
 end
 
