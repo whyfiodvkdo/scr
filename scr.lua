@@ -7,8 +7,7 @@ if script.Parent then return end
 
 -- 🖥️ Подключение к сервисам Roblox
 local UserInputService = game:GetService("UserInputService")
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+local Players = game.Players.LocalPlayer
 local mouse = player:GetMouse()
 
 -- 🔵 Переменные состояния
@@ -35,7 +34,7 @@ local function createHighlight(targetCharacter)
     box.Transparency = 0.7                    -- Полупрозрачность
     box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
     box.Adornee = targetCharacter             -- Прикрепляем к персонажу
-    
+
     highlightObject = box                     -- Сохраняем ссылку на объект
 end
 
@@ -68,6 +67,9 @@ local function toggleModule()
     local clr = enabled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
     showNotification(text, clr)
 end
+
+-- 🎯 Инициализация при запуске loadstring
+showNotification("[🆘] Системное сообщение: скрипт загружен!", Color3.fromRGB(255, 255, 255))
 
 -- 🕹️ Отслеживание нажатий клавиш и мыши
 UserInputService.InputBegan:Connect(function(input, gp)
@@ -102,7 +104,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
     end
 end)
 
--- 🎯 Автоматическая инициализация при смене персонажа
+-- 🧪 Автоматическая инициализация при смене персонажа
 player.CharacterAdded:Connect(function(char)
     -- Ожидаем появления модели в мире
     repeat wait() until char:WaitForChild("HumanoidRootPart").CFrame ~= CFrame.zero
