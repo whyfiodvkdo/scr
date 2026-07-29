@@ -1,17 +1,17 @@
--- Настройки скрипта
+-- ⚙️ Настройки скрипта
 local MESSAGE_DURATION = 3 -- Время отображения сообщения (секунды)
 
--- Защита от повторного запуска
+-- 🛡️ Защита от повторного запуска
 if script.Parent then return end
 
--- Подключение к сервисам Roblox
+-- 🖥️ Подключение к сервисам Roblox
 local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
 local ContextActionService = game.ContextActionService
 local Players = game.Players
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 
--- Функция создания визуальной подсказки
+-- ✏️ Функция создания визуальной подсказки
 local function createHighlight(targetCharacter)
     if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
 
@@ -27,7 +27,7 @@ local function createHighlight(targetCharacter)
     return box
 end
 
--- Вывод имени игрока рядом с ним
+-- 🗨️ Вывод имени игрока рядом с ним
 local function showNameTag(character, nameText)
     if not character then return nil end
 
@@ -40,7 +40,7 @@ local function showNameTag(character, nameText)
     tag:Destroy()                        
 end
 
--- Переменные состояния
+-- 🔹 Переменные состояния
 local currentTarget = nil     -- Текущий игрок под курсором
 local highlightObject = nil   -- Объект рамки выделения
 
@@ -83,7 +83,7 @@ local function onInput(actionName, inputState, inputObj)
         if hum.Health > 0 then
             hum.Health = 0 
             
-            -- Красная вспышка рамки при убийстве
+            -- Красная вспышка рамки при убийстве (локально)
             if highlightObject then
                 highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
                 task.wait(0.1)
@@ -155,7 +155,7 @@ if _G.GCHActions == nil then
 	game.StarterGui:SetCore(
 		"SendNotification",
 		{
-			Title="[DEBUG] Actions"; 
+			Title="🆘 Actions"; 
 			Text="Скрипт успешно загружен!";
 			Icon="rbxassetid://9114319780"; Duration=3;
 		}
