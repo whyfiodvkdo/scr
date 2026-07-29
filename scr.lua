@@ -3,67 +3,71 @@ local UserInputService = game:GetService("UserInputService")
 local player = game.Players.LocalPlayer
 local mouse = player:GetMouse()
 
-local enabled = false
-local highlight = nil
+local enabled = false -- Флаг состояния
+local highlight = nil  -- Объект рамки выделения
 
+-- Функция создания/обновления рамки
 local function createHighlight(targetChar)
-    if highlight then highlight:Destroy() end
+    if not targetChar then return end
+
+    -- Если рамка уже есть, просто меняем её свойства
+    if highlight then 
+        highlight.Adornee = targetChar or workspace.CurrentCamera
+        return
+    end
+
+    -- Создаем новую рамку
     highlight = Instance.new("BoxHandleAdornment")
     highlight.Name = "G_Cheat_Highlight"
-    highlight.Adornee = targetChar
-    highlight.Size = targetChar:GetExtentsSize() + Vector3.new(1, 1, 1)
-    highlight.Color3 = Color3.fromRGB(0, 255, 0) -- Зеленый при включении
-    highlight.Transparency = 0.6
     highlight.AlwaysOnTop = true
     highlight.ZIndex = 1
     highlight.Parent = workspace.CurrentCamera
 end
 
-local function destroyUI()
-    if highlight then
-        highlight:Destroy()
-        highlight = nil
-    end
-end
-
--- Функция активации/деактивации
+-- Переключение режима работы
 local function toggleModule()
     enabled = not enabled
+
+    local msgColor = enabled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
     
-    if enabled then
-        -- АКТИВАЦИЯ
-        createHighlight(nil) -- Создаем пустой объект UI
-        
-        print("\27[32m[G-Script] Активирован. Наведитесь на игрока и нажмите ПКМ.\27[0m")
-        
-        local hint = Instance.new("Message")
-        hint.Text = "[G-Script] РЕЖИМ УБИЙСТВА ВКЛЮЧЕН"
-        hint.Parent = workspace
-        task.wait(2)
-        hint:Destroy()
-    else
-        -- ДЕАКТИВАЦИЯ
-        destroyUI()
-        print("\27[31m[G-Script] Деактивирован. Права сняты.\27[0m")
-        
-        local hint = Instance.new("Message")
-        hint.Text = "[G-Script] Режим выключен"
-        hint.Parent = workspace
-        task.wait(2)
-        hint:Destroy()
-    end
+    -- Мгновенные уведомления через Hint (работают быстрее Message)
+    local hint = Instance.new("Hint") 
+    hint.TextColor3 = msgColor
+    hint.Outline = false
+    hint.Text = ("[G-Script] %s"):format(
+        enabled and "🟢 РЕЖИМ УБИЙСТВА ВКЛЮЧЕН" or "🔴 Режим выключен"
+    )
+    hint.Parent = workspace
+    task.wait(2)
+    hint:Destroy()
 end
 
--- ОСНОВНОЙ ЦИКЛ
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    
+-- Основной цикл слежения за мышью
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+
     -- Нажатие клавиши G
     if input.KeyCode == Enum.KeyCode.G then
-        toggleModule()
+        toggleModule() -- Без задержки!
+        
+        -- Меняем цвет рамки сразу после переключения
+        if highlight then
+            highlight.Color3 = enabled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+            highlight.Transparency = 0.8
+            
+            -- Обновляем размер рамки под персонажа
+            if enabled and player.Character then
+                highlight.Size = player.Character:GetExtentsSize() + Vector3.new(1, 1, 1)
+                highlight.Visible = true
+                highlight.Adornee = player.Character
+            else
+                highlight.Visible = false
+                highlight.Size = Vector3.new(1, 1, 1)
+            end
+        end
     end
 
-    -- Если модуль включен и нажата ПКМ
+    -- Наведение курсора и ПКМ
     if enabled and input.UserInputType == Enum.UserInputType.MouseButton2 then
         local target = mouse.Target
         if target and target.Parent then
@@ -72,11 +76,11 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             
             -- Проверки: это живой игрок? Не я ли это?
             if hum and char ~= player.Character and hum.Health > 0 then
-                -- ПРЯМОЕ ИЗМЕНЕНИЕ ХП НА КЛИЕНТЕ
+                -- Прямое изменение ХП НА КЛИЕНТЕ
                 hum.Health = 0 
                 
-                -- Визуальное подтверждение
-                highlight.Color3 = Color3.fromRGB(255, 0, 0) -- Мигает красным
+                -- Красная вспышка при убийстве
+                highlight.Color3 = Color3.fromRGB(255, 0, 0)
                 task.wait(0.1)
                 highlight.Color3 = Color3.fromRGB(0, 255, 0)
             end
@@ -85,12 +89,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 -- Автоматическая чистка при выходе персонажа
-player.CharacterAdded:Connect(function()
-    if not enabled then return end
+player.CharacterAdded:Connect(function(char)
+    -- Ждем немного, чтобы персонаж появился в мире
     task.wait(0.5)
-    local root = player.Character:FindFirstChild("HumanoidRootPart") or player.Character.PrimaryPart
-    if root then
-        createHighlight(player.Character)
-    end
+    createHighlight(player.Character) -- Рамка всегда будет зеленой у своего персонажа
 end)
--- ====================================================================
