@@ -6,6 +6,7 @@ if script.Parent then return end
 
 -- 🖥️ Подключение к сервисам Roblox
 local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService") -- Для перехвата событий мыши
 local Players = game.Players.LocalPlayer
 local mouse = player:GetMouse()
 
@@ -17,11 +18,11 @@ local function createHighlight(targetCharacter)
     box.Name = "G_Cheat_Highlight"
     box.AlwaysOnTop = true
     box.ZIndex = 10
-    box.Color3 = Color3.fromRGB(0, 255, 0)   -- Основной цвет (зеленый)
+    box.Color3 = Color3.fromRGB(0, 255, 0)   -- Основной цвет рамки (зеленый)
     box.Transparency = 0.7                    -- Полупрозрачность
     box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
-    box.Adornee = targetCharacter             -- Прикрепляем к персонажу
-    
+    box.Adornee = targetCharacter             -- Прикрепляем рамку к персонажу
+
     return box
 end
 
@@ -33,10 +34,10 @@ local function showNameTag(character, nameText)
     tag.TextColor3 = Color3.fromRGB(255, 255, 255)
     tag.Outline = false                   -- Без контура
     tag.Text = "[🆘] " .. nameText
-    tag.Parent = character                -- Привязываем к игроку
+    tag.Parent = character                -- Привязываем его к игроку
     task.wait(MESSAGE_DURATION)               -- Ждем заданное время
     tag:Destroy()                            -- Удаляем уведомление
-    
+
     return tag
 end
 
@@ -50,7 +51,7 @@ mouse.TargetChanged:Connect(function(newTarget)
         local char = newTarget.Parent
         local hum = char:FindFirstChildOfClass("Humanoid")
         
-        -- Проверки: это живой игрок? Не я ли это?
+        -- Проверка: это живой игрок? Не я ли это?
         if hum and char ~= player.Character and hum.Health > 0 then
             -- Создаем/обновляем рамку
             highlightObject = createHighlight(char)
@@ -81,50 +82,51 @@ mouse.TargetChanged:Connect(function(newTarget)
     end
 end)
 
--- 🎮 Назначаем действия на кнопки МЫШИ
-UserInputService.MouseButton1Down:Connect(function()
-    -- Левая кнопка мыши: мгновенная смерть
-    if currentTarget then
-        local humanoid = currentTarget:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.Health > 0 then
-            humanoid.Health = 0 
-            
-            -- Красная вспышка рамки при убийстве
-            if highlightObject then
-                highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
-                task.wait(0.1)
-                highlightObject.Color3 = Color3.fromRGB(0, 255, 0)
+-- 🎮 Назначаем действия на кнопки МЫШИ через ContextActionService
+local function onInput(actionName, inputState, inputObj)
+    if inputState == Enum.UserInputState.Begin then
+        if actionName == "LeftClick" then
+            -- Левая кнопка мыши: мгновенная смерть
+            if currentTarget then
+                local humanoid = currentTarget:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid.Health > 0 then
+                    humanoid.Health = 0 
+                    
+                    -- Красная вспышка рамки при убийстве
+                    if highlightObject then
+                        highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
+                        task.wait(0.1)
+                        highlightObject.Color3 = Color3.fromRGB(0, 255, 0)
+                    end
+                end
+            end
+        elseif actionName == "RightClick" then
+            -- Правая кнопка мыши: подбросить вверх
+            if currentTarget then
+                local root = currentTarget:WaitForChild("HumanoidRootPart")
+                if root then
+                    root.Velocity = Vector3.new(0, 80, 0) -- Подбрасывает высоко в воздух
+                end
+            end
+        elseif actionName == "KeyQ" then
+            -- Клавиша Q: Оттолкнуть от себя
+            if currentTarget then
+                local myPos = player.Character:WaitForChild("HumanoidRootPart").Position
+                local theirPos = currentTarget:WaitForChild("HumanoidRootPart").Position
+                local direction = (myPos - theirPos).Unit * 40 -- Направление от них к нам
+
+                local bv = Instance.new("BodyVelocity", currentTarget:WaitForChild("UpperTorso"))
+                bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                bv.P = 12000
+                bv.Velocity = direction
+                wait(0.2)
+                bv:Destroy()
             end
         end
     end
-end)
+end
 
-UserInputService.MouseButton2Down:Connect(function()
-    -- Правая кнопка мыши: подбросить вверх
-    if currentTarget then
-        local root = currentTarget:WaitForChild("HumanoidRootPart")
-        if root then
-            root.Velocity = Vector3.new(0, 80, 0) -- Подбрасывает высоко в воздух
-        end
-    end
-end)
-
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end                     -- Игнорируем события ввода в чат
-
-    -- Нажатие Q: Оттолкнуть от себя
-    if input.KeyCode == Enum.KeyCode.Q then
-        if currentTarget then
-            local myPos = player.Character:WaitForChild("HumanoidRootPart").Position
-            local theirPos = currentTarget:WaitForChild("HumanoidRootPart").Position
-            local direction = (myPos - theirPos).Unit * 40 -- Направление от них к нам
-
-            local bv = Instance.new("BodyVelocity", currentTarget:WaitForChild("UpperTorso"))
-            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-            bv.P = 12000
-            bv.Velocity = direction
-            wait(0.2)
-            bv:Destroy()
-        end
-    end
-end)
+-- Регистрируем наши действия в ContextActionService
+ContextActionService:BindAction("LeftClick", onInput, false, Enum.UserInputType.MouseButton1)
+ContextActionService:BindAction("RightClick", onInput, false, Enum.UserInputType.MouseButton2)
+ContextActionService:BindAction("KeyQ", onInput, false, Enum.KeyCode.Q)
