@@ -17,7 +17,7 @@ local function createHighlight(targetCharacter)
     box.Name = "G_Cheat_Highlight"
     box.AlwaysOnTop = true
     box.ZIndex = 10
-    box.Color3 = Color3.fromRGB(255, 255, 0)   -- Жёлтый цвет рамки при выборе
+    box.Color3 = Color3.fromRGB(0, 255, 0)   -- Основной цвет (зеленый)
     box.Transparency = 0.7                    -- Полупрозрачность
     box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
     box.Adornee = targetCharacter             -- Прикрепляем к персонажу
@@ -81,36 +81,36 @@ mouse.TargetChanged:Connect(function(newTarget)
     end
 end)
 
--- 🎮 Назначаем действия на кнопки
+-- 🎮 Назначаем действия на кнопки МЫШИ
+UserInputService.MouseButton1Down:Connect(function()
+    -- Левая кнопка мыши: мгновенная смерть
+    if currentTarget then
+        local humanoid = currentTarget:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.Health > 0 then
+            humanoid.Health = 0 
+            
+            -- Красная вспышка рамки при убийстве
+            if highlightObject then
+                highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
+                task.wait(0.1)
+                highlightObject.Color3 = Color3.fromRGB(0, 255, 0)
+            end
+        end
+    end
+end)
+
+UserInputService.MouseButton2Down:Connect(function()
+    -- Правая кнопка мыши: подбросить вверх
+    if currentTarget then
+        local root = currentTarget:WaitForChild("HumanoidRootPart")
+        if root then
+            root.Velocity = Vector3.new(0, 80, 0) -- Подбрасывает высоко в воздух
+        end
+    end
+end)
+
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end                     -- Игнорируем события ввода в чат
-
-    -- Нажатие F: Мгновенная смерть
-    if input.KeyCode == Enum.KeyCode.F then
-        if currentTarget then
-            local humanoid = currentTarget:FindFirstChildOfClass("Humanoid")
-            if humanoid and humanoid.Health > 0 then
-                humanoid.Health = 0 
-                
-                -- Красная вспышка рамки при убийстве
-                if highlightObject then
-                    highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
-                    task.wait(0.1)
-                    highlightObject.Color3 = Color3.fromRGB(255, 255, 0)
-                end
-            end
-        end
-    end
-
-    -- Нажатие E: Подбросить вверх
-    if input.KeyCode == Enum.KeyCode.E then
-        if currentTarget then
-            local root = currentTarget:WaitForChild("HumanoidRootPart")
-            if root then
-                root.Velocity = Vector3.new(0, 80, 0) -- Подбрасывает вверх
-            end
-        end
-    end
 
     -- Нажатие Q: Оттолкнуть от себя
     if input.KeyCode == Enum.KeyCode.Q then
