@@ -1,17 +1,17 @@
--- ⚙️ Настройки скрипта
+-- Настройки скрипта
 local MESSAGE_DURATION = 3 -- Время отображения сообщения (секунды)
 
--- 🛡️ Защита от повторного запуска
+-- Защита от повторного запуска
 if script.Parent then return end
 
--- 🖥️ Подключение к сервисам Roblox
+-- Подключение к сервисам Roblox
 local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
 local ContextActionService = game.ContextActionService
 local Players = game.Players
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 
--- ✏️ Функция создания визуальной подсказки
+-- Функция создания визуальной подсказки
 local function createHighlight(targetCharacter)
     if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
 
@@ -27,34 +27,32 @@ local function createHighlight(targetCharacter)
     return box
 end
 
--- 🗨️ Вывод имени игрока рядом с ним
+-- Вывод имени игрока рядом с ним
 local function showNameTag(character, nameText)
     if not character then return nil end
 
     local tag = Instance.new("Hint")       
     tag.TextColor3 = Color3.fromRGB(255, 255, 255)
     tag.Outline = false                   
-    tag.Text = "[🆘] " .. nameText
+    tag.Text = "[DEBUG] " .. nameText
     tag.Parent = character                
     task.wait(MESSAGE_DURATION)           
     tag:Destroy()                        
 end
 
--- 🔹 Переменные состояния
+-- Переменные состояния
 local currentTarget = nil     -- Текущий игрок под курсором
 local highlightObject = nil   -- Объект рамки выделения
 
--- 🕸️ Переключение режима работы
+-- Переключение режима работы
 local function toggleModule()
     local enabled = _G.GCHActions == nil and true or not _G.GCHActions
 
-    local clr = enabled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 69, 69)
-    
     game.StarterGui:SetCore(
         "SendNotification",
         {
-            Title="🆘 Actions"; 
-            Text=enabled and "🟢 РЕЖИМ ВКЛЮЧЕН" or "🔴 РЕЖИМ ОТКЛЮЧЁН";
+            Title="[DEBUG] Actions"; 
+            Text=enabled and "Режим действий ВКЛЮЧЕН" or "Режим действий ОТКЛЮЧЁН";
             Icon="rbxassetid://9114319780"; Duration=3;
         }
     )
@@ -66,7 +64,7 @@ local function toggleModule()
     end
 end
 
--- 🎮 Назначаем действия на кнопки МЫШИ через ContextActionService
+-- Назначаем действия на кнопки МЫШИ через ContextActionService
 local function onInput(actionName, inputState, inputObj)
     if inputState ~= Enum.UserInputState.Begin then return end
 
@@ -94,7 +92,7 @@ local function onInput(actionName, inputState, inputObj)
         else
             game.StarterGui:SetCore(
                 "SendNotification",
-                {Title="🆘 Actions"; Text="Игрок уже мертв."; Duration=3;}
+                {Title="[DEBUG] Actions"; Text="Игрок уже мертв."; Duration=3;}
             )
         end
     elseif actionName == "KeyQ" then
@@ -115,12 +113,12 @@ local function onInput(actionName, inputState, inputObj)
     end
 end
 
--- 🔵 Регистрация действий в ContextActionService
+-- Регистрация действий в ContextActionService
 ContextActionService:BindAction("LeftClick", onInput, false, Enum.UserInputType.MouseButton1)
 ContextActionService:BindAction("RightClick", onInput, false, Enum.UserInputType.MouseButton2)
 ContextActionService:BindAction("KeyQ", onInput, false, Enum.KeyCode.Q)
 
--- 🕸️ Отслеживание мыши для выбора цели
+-- Отслеживание мыши для выбора цели
 mouse.TargetChanged:Connect(function(newTarget)
     if newTarget and newTarget.Parent then
         local char = newTarget.Parent
@@ -150,14 +148,14 @@ mouse.TargetChanged:Connect(function(newTarget)
     end
 end)
 
--- 🔄 Инициализация при первом запуске loadstring
+-- Инициализация при первом запуске loadstring
 if _G.GCHActions == nil then
 	_G.GCHActions = true -- Включено по умолчанию
 
 	game.StarterGui:SetCore(
 		"SendNotification",
 		{
-			Title="🆘 Actions"; 
+			Title="[DEBUG] Actions"; 
 			Text="Скрипт успешно загружен!";
 			Icon="rbxassetid://9114319780"; Duration=3;
 		}
