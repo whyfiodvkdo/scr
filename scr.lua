@@ -1,5 +1,5 @@
 -- ⚙️ Настройки скрипта
-local MESSAGE_DURATION = 4           -- Время отображения сообщения (секунды)
+local MESSAGE_DURATION = 3           -- Время отображения сообщения (секунды)
 
 -- 🛡️ Защита от повторного запуска
 if script.Parent then return end
@@ -12,48 +12,18 @@ local mouse = player:GetMouse()
 
 -- ✏️ Функция вывода системного уведомления
 local function showNotification(messageText, color)
-    local msg = Instance.new("Message")       -- Текстовый объект
-    msg.TextColor3 = color                   -- Цвет текста
-    msg.Outline = false                      -- Без контура
+    local msg = Instance.new("Message")       
+    msg.TextColor3 = color                   
+    msg.Outline = false                      
     msg.Text = messageText
     msg.Parent = workspace
-    task.wait(MESSAGE_DURATION)               -- Ждем заданное время
-    msg:Destroy()                            -- Удаляем уведомление
-end
-
--- 🔧 Отладочные функции
-local function debugLog(msg)
-    print("[DEBUG] " .. msg)
-end
-
-local function isValidTarget(character)
-    if not character then 
-        debugLog("❌ Ошибка: Нет цели под курсором.")
-        return false
-    end
-
-    local hum = character:FindFirstChildOfClass("Humanoid")
-    if not hum then 
-        debugLog("❌ Ошибка: Цель — не живой персонаж.")
-        return false
-    end
-
-    if hum.Health <= 0 then 
-        debugLog("❌ Ошибка: Персонаж уже мертв.")
-        return false
-    end
-
-    if character == player.Character then 
-        debugLog("❌ Ошибка: Нельзя действовать против самого себя.")
-        return false
-    end
-
-    return true
+    task.wait(MESSAGE_DURATION)               
+    msg:Destroy()                            
 end
 
 -- 🕸️ Инициализация при запуске loadstring
 showNotification("[🆘] Системное сообщение: скрипт успешно загружен!", Color3.fromRGB(255, 255, 255))
-debugLog("Сценарий начал работу!")
+print("[DEBUG] Сценарий начал работу!")
 
 -- 🔹 Переменные состояния
 local currentTarget = nil     -- Текущий игрок под курсором
@@ -67,11 +37,11 @@ local function createHighlight(targetCharacter)
     box.Name = "G_Cheat_Highlight"
     box.AlwaysOnTop = true
     box.ZIndex = 10
-    box.Color3 = Color3.fromRGB(0, 255, 0)   -- Основной цвет рамки (зеленый)
-    box.Transparency = 0.7                    -- Полупрозрачность
+    box.Color3 = Color3.fromRGB(0, 255, 0)   
+    box.Transparency = 0.7                    
     box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
-    box.Adornee = targetCharacter             -- Прикрепляем рамку к персонажу
-
+    box.Adornee = targetCharacter             
+    
     return box
 end
 
@@ -83,9 +53,9 @@ local function showNameTag(character, nameText)
     tag.TextColor3 = Color3.fromRGB(255, 255, 255)
     tag.Outline = false                   
     tag.Text = "[🆘] " .. nameText
-    tag.Parent = character                -- Привязываем его к игроку
-    task.wait(MESSAGE_DURATION)               
-    tag:Destroy()                            
+    tag.Parent = character                
+    task.wait(MESSAGE_DURATION)           
+    tag:Destroy()                        
 
     return tag
 end
@@ -94,51 +64,59 @@ end
 local function onInput(actionName, inputState, inputObj)
     if inputState ~= Enum.UserInputState.Begin then return end
 
-    if actionName == "LeftClick" and currentTarget then
-        debugLog("ЛКМ: Проверка цели...")
+    -- Всегда перепроверяем существование цели
+    if not currentTarget or not currentTarget.Parent then 
+        print("[DEBUG] Ошибка: Цель исчезла.")
+        return 
+    end
+
+    local hum = currentTarget:FindFirstChildOfClass("Humanoid")
+    if not hum then 
+        print("[DEBUG] Ошибка: Нет Humanoid у цели.")
+        return 
+    end
+
+    if actionName == "LeftClick" then
+        print("[DEBUG] ЛКМ: Действие - убить.")
         
-        if not isValidTarget(currentTarget) then return end
-
-        -- Действие ЛКМ: убить
-        debugLog("✅ Действие: Убить")
-        currentTarget.Humanoid.Health = 0 
-
-        -- Красная вспышка рамки при убийстве
-        if highlightObject then
-            highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
-            task.wait(0.1)
-            highlightObject.Color3 = Color3.fromRGB(0, 255, 0)
+        if hum.Health > 0 then
+            hum.Health = 0 
+            
+            -- Красная вспышка рамки при убийстве
+            if highlightObject then
+                highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
+                task.wait(0.1)
+                highlightObject.Color3 = Color3.fromRGB(0, 255, 0)
+            end
+        else
+            print("[DEBUG] ❌ Игрок уже мертв.")
         end
-    elseif actionName == "RightClick" and currentTarget then
-        debugLog("ПКМ: Проверка цели...")
+    elseif actionName == "RightClick" then
+        print("[DEBUG] ПКМ: Действие - подбросить.")
         
-        if not isValidTarget(currentTarget) then return end
-
-        -- Действие ПКМ: подбросить вверх
-        debugLog("✅ Действие: Подбросить")
-        local root = currentTarget:WaitForChild("HumanoidRootPart")
+        local root = currentTarget:WaitForChild("HumanoidRootPart", 0.1)
         if root then
             root.Velocity = Vector3.new(0, 80, 0)
         else
-            debugLog("❌ Ошибка: Не найден HumanoidRootPart у цели.")
+            print("[DEBUG] ❌ Не найден HumanoidRootPart у цели.")
         end
-    elseif actionName == "KeyQ" and currentTarget then
-        debugLog("Q: Проверка цели...")
+    elseif actionName == "KeyQ" then
+        print("[DEBUG] Клавиша Q: Действие - толкать.")
         
-        if not isValidTarget(currentTarget) then return end
-
-        -- Действие Q: оттолкнуть от себя
-        debugLog("✅ Действие: Толкать")
         local myPos = player.Character:FindFirstChild("HumanoidRootPart").Position
         local theirPos = currentTarget:FindFirstChild("HumanoidRootPart").Position
-        local direction = (myPos - theirPos).Unit * 40
+        if myPos and theirPos then
+            local direction = (myPos - theirPos).Unit * 40
 
-        local bv = Instance.new("BodyVelocity", currentTarget:FindFirstChild("UpperTorso"))
-        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        bv.P = 12000
-        bv.Velocity = direction
-        wait(0.2)
-        bv:Destroy()
+            local bv = Instance.new("BodyVelocity", currentTarget:FindFirstChild("UpperTorso"))
+            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            bv.P = 12000
+            bv.Velocity = direction
+            wait(0.2)
+            bv:Destroy()
+        else
+            print("[DEBUG] ❌ Не найдены RootParts.")
+        end
     end
 end
 
@@ -154,18 +132,18 @@ mouse.TargetChanged:Connect(function(newTarget)
         local char = newTarget.Parent
         local hum = char:FindFirstChildOfClass("Humanoid")
         
-        -- Проверки: это живой игрок? Не я ли это?
-        if hum and char ~= player.Character and hum.Health > 0 then
+        -- Теперь мы НЕ проверяем, является ли это другим игроком.
+        -- Работает со всеми моделями, имеющими Humanoid.
+        if hum then
             -- Создаем/обновляем рамку
             highlightObject = createHighlight(char)
             
-            -- Получаем имя игрока
+            -- Получаем имя игрока (если он есть)
             local plr = Players:GetPlayerFromCharacter(char)
             if plr then
-                -- Выводим ник над головой
                 showNameTag(char.HumanoidRootPart, plr.Name)
             else
-                showNameTag(char.HumanoidRootPart, char.Name)
+                showNameTag(char.HumanoidRootPart, "<Не игрок>")
             end
 
             -- Запоминаем текущую цель
