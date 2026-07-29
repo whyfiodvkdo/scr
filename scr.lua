@@ -1,165 +1,123 @@
 -- ⚙️ Настройки скрипта
-local MESSAGE_DURATION = 3 -- Время отображения сообщения (секунды)
+local KEY_TOGGLE = Enum.KeyCode.F -- Клавиша открытия/закрытия
+local MIN_SPEED = 16              -- Минимальная скорость
+local MAX_SPEED = 200             -- Максимальная скорость
 
 -- 🛡️ Защита от повторного запуска
 if script.Parent then return end
 
 -- 🖥️ Подключение к сервисам Roblox
-local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
-local ContextActionService = game.ContextActionService
+local UserInputService = game:GetService("UserInputService")
 local Players = game.Players
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 
--- ✏️ Функция создания визуальной подсказки
-local function createHighlight(targetCharacter)
-    if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
+-- ✏️ Создание интерфейса
+local function createUI()
+    local ui = Instance.new("ScreenGui", player.PlayerGui)
+    ui.Name = "SpeedGUI"
+    
+    -- Основная панель
+    local frame = Instance.new("Frame", ui)
+    frame.Size = UDim2.fromScale(0.3, 0.4)
+    frame.Position = UDim2.fromScale(0.5, 0.5) - UDim2.fromScale(frame.Size.X.Scale / 2, frame.Size.Y.Scale / 2)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
 
-    local box = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
-    box.Name = "G_Cheat_Highlight"
-    box.AlwaysOnTop = true
-    box.ZIndex = 10
-    box.Color3 = Color3.fromRGB(0, 255, 0)   -- Основной цвет рамки
-    box.Transparency = 0.7                    -- Полупрозрачность
-    box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
-    box.Adornee = targetCharacter             -- Прикрепляем рамку к персонажу
+    -- Заголовок
+    local title = Instance.new("TextLabel", frame)
+    title.Text = "Скорость передвижения"
+    title.FontFace = Font.new("rbxasset://fonts/faces/Font.ttf", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.fromScale(1, 0.2)
+    title.Position = UDim2.fromScale(0, 0)
 
-    return box
-end
+    -- Текущее значение
+    local valueLabel = Instance.new("TextLabel", frame)
+    valueLabel.Text = ""
+    valueLabel.FontFace = Font.new("rbxasset://fonts/faces/Font.ttf", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+    valueLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Size = UDim2.fromScale(1, 0.1)
+    valueLabel.Position = UDim2.fromScale(0, 0.2)
 
--- 🗨️ Вывод имени игрока рядом с ним
-local function showNameTag(character, nameText)
-    if not character then return nil end
+    -- Ползунок
+    local sliderBar = Instance.new("Frame", frame)
+    sliderBar.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    sliderBar.Size = UDim2.fromScale(0.9, 0.05)
+    sliderBar.Position = UDim2.fromScale(0.05, 0.35)
 
-    local tag = Instance.new("Hint")       
-    tag.TextColor3 = Color3.fromRGB(255, 255, 255)
-    tag.Outline = false                   
-    tag.Text = "[DEBUG] " .. nameText
-    tag.Parent = character                
-    task.wait(MESSAGE_DURATION)           
-    tag:Destroy()                        
-end
+    local thumb = Instance.new("Frame", sliderBar)
+    thumb.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    thumb.Size = UDim2.fromScale(0.1, 1)
+    thumb.Position = UDim2.fromScale(0, 0)
 
--- 🔹 Переменные состояния
-local currentTarget = nil     -- Текущий игрок под курсором
-local highlightObject = nil   -- Объект рамки выделения
+    -- 🔧 Логика ползунка
+    local dragStartX = nil
+    local startThumbPos = nil
 
--- Переключение режима работы
-local function toggleModule()
-    local enabled = _G.GCHActions == nil and true or not _G.GCHActions
-
-    game.StarterGui:SetCore(
-        "SendNotification",
-        {
-            Title="[DEBUG] Actions"; 
-            Text=enabled and "Режим действий ВКЛЮЧЕН" or "Режим действий ОТКЛЮЧЁН";
-            Icon="rbxassetid://9114319780"; Duration=3;
-        }
-    )
-
-    _G.GCHActions = enabled
-
-    if highlightObject then
-        highlightObject.Visible = enabled
+    local function updateValue(xPosition)
+        local percent = math.clamp((xPosition - sliderBar.AbsolutePosition.X) / sliderBar.AbsoluteSize.X, 0, 1)
+        
+        local newSpeed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * percent
+        player.Character.Humanoid.WalkSpeed = newSpeed
+        
+        thumb.Position = UDim2.fromScale(percent, 0)
+        valueLabel.Text = string.format("Текущая скорость: %.0f", newSpeed)
     end
-end
 
--- Назначаем действия на кнопки МЫШИ через ContextActionService
-local function onInput(actionName, inputState, inputObj)
-    if inputState ~= Enum.UserInputState.Begin then return end
-
-    -- Проверка флага _G (если скрипт уже был запущен ранее)
-    if not (_G.GCHActions == nil or _G.GCHActions) then return end
-
-    if actionName == "LeftClick" then
-        if not currentTarget or not currentTarget.HumanoidRootPart then return end
-        
-        local root = currentTarget.HumanoidRootPart
-        root.Velocity = Vector3.new(0, 80, 0) -- Подбрасывает вверх
-    elseif actionName == "RightClick" then
-        if not currentTarget or not currentTarget.Humanoid then return end
-        
-        local hum = currentTarget.Humanoid
-        if hum.Health > 0 then
-            hum.Health = 0 
+    -- Обработка перетаскивания
+    local function onDrag(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            local x = input.Position.X
             
-            -- Красная вспышка рамки при убийстве (локально)
-            if highlightObject then
-                highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
-                task.wait(0.1)
-                highlightObject.Color3 = Color3.fromRGB(0, 255, 0)
+            if not dragStartX then
+                dragStartX = x
+                startThumbPos = thumb.Position.X.Offset
+            else
+                local delta = x - dragStartX
+                local newX = startThumbPos + delta / sliderBar.AbsoluteSize.X
+                
+                updateValue(sliderBar.AbsolutePosition.X + sliderBar.AbsoluteSize.X * newX)
             end
-        else
-            game.StarterGui:SetCore(
-                "SendNotification",
-                {Title="[DEBUG] Actions"; Text="Игрок уже мертв."; Duration=3;}
-            )
-        end
-    elseif actionName == "KeyQ" then
-        if not currentTarget or not currentTarget.HumanoidRootPart then return end
-        
-        local myPos = player.Character.HumanoidRootPart.Position
-        local theirPos = currentTarget.HumanoidRootPart.Position
-        if myPos and theirPos then
-            local direction = (myPos - theirPos).Unit * 40
-
-            local bv = Instance.new("BodyVelocity", currentTarget.UpperTorso)
-            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-            bv.P = 12000
-            bv.Velocity = direction
-            wait(0.2)
-            bv:Destroy()
         end
     end
+
+    thumb.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or
+           input.UserInputType == Enum.UserInputType.Touch then
+            dragStartX = nil
+            startThumbPos = nil
+            
+            UserInputService.InputChanged:Connect(onDrag)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or
+           input.UserInputType == Enum.UserInputType.Touch then
+            UserInputService.InputChanged:Disconnect(onDrag)
+        end
+    end)
+
+    -- Возвращаем объект UI для управления видимостью
+    return {
+        Gui = ui,
+        SetVisible = function(visible)
+            ui.Enabled = visible
+        end
+    }
 end
 
--- Регистрация действий в ContextActionService
-ContextActionService:BindAction("LeftClick", onInput, false, Enum.UserInputType.MouseButton1)
-ContextActionService:BindAction("RightClick", onInput, false, Enum.UserInputType.MouseButton2)
-ContextActionService:BindAction("KeyQ", onInput, false, Enum.KeyCode.Q)
+-- 🕸️ Управление окном через клавиатуру
+local uiInstance = createUI()
+uiInstance.SetVisible(false)
 
--- Отслеживание мыши для выбора цели
-mouse.TargetChanged:Connect(function(newTarget)
-    if newTarget and newTarget.Parent then
-        local char = newTarget.Parent
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        
-        -- Работает со всеми моделями, имеющими Humanoid
-        if hum then
-            highlightObject = createHighlight(char)
-            currentTarget = char
-
-            -- Получаем имя игрока (или название модели)
-            local plr = Players:GetPlayerFromCharacter(char)
-            if plr then
-                showNameTag(char.HumanoidRootPart, plr.Name)
-            else
-                showNameTag(char.HumanoidRootPart, "<Не игрок>")
-            end
-        elseif highlightObject then
-            highlightObject:Destroy()
-            highlightObject = nil
-            currentTarget = nil
-        end
-    elseif highlightObject then
-        highlightObject:Destroy()
-        highlightObject = nil
-        currentTarget = nil
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Keyboard and
+       input.KeyCode == KEY_TOGGLE then
+        uiInstance.SetVisible(not uiInstance.Gui.Enabled)
     end
 end)
 
--- Инициализация при первом запуске loadstring
-if _G.GCHActions == nil then
-	_G.GCHActions = true -- Включено по умолчанию
-
-	game.StarterGui:SetCore(
-		"SendNotification",
-		{
-			Title="🆘 Actions"; 
-			Text="Скрипт успешно загружен!";
-			Icon="rbxassetid://9114319780"; Duration=3;
-		}
-	)
-else
-	toggleModule() -- Повторный вызов меняет состояние
-end
