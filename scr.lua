@@ -5,9 +5,10 @@ local MESSAGE_DURATION = 3           -- Время отображения соо
 if script.Parent then return end
 
 -- 🖥️ Подключение к сервисам Roblox
-local UserInputService = game:GetService("UserInputService")
-local ContextActionService = game:GetService("ContextActionService") -- Для перехвата событий мыши
-local Players = game.Players.LocalPlayer
+local UserInputService = game:GamepadService or game:GetService("UserInputService") -- Для совместимости
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 
 -- ✏️ Функция создания или обновления визуальной подсказки
@@ -44,6 +45,116 @@ end
 -- 🔹 Переменные состояния
 local currentTarget = nil     -- Текущий игрок под курсором
 local highlightObject = nil   -- Объект рамки выделения
+local actionMenu = nil        -- Наше кастомное меню
+
+-- 📋 Создание интерфейса действия
+local function createActionMenu()
+    if actionMenu then return end
+
+    local gui = Instance.new("ScreenGui")
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 9999
+    gui.Parent = player.PlayerGui
+
+    -- Контейнер для кнопок
+    local frame = Instance.new("Frame", gui)
+    frame.BackgroundTransparency = 1
+    frame.Position = UDim2.new(mouse.X/workspace.CurrentCamera.ViewportSize.X - 0.5,
+                               mouse.Y/workspace.CurrentCamera.ViewportSize.Y - 0.5)
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+
+    -- Кнопка 1: Убить 💀
+    local btnKill = Instance.new("TextButton", frame)
+    btnKill.AutoButtonColor = false
+    btnKill.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    btnKill.BackgroundTransparency = 0.8
+    btnKill.Size = UDim2.new(0, 60, 0, 60)
+    btnKill.Position = UDim2.new(-0.5, 0, -0.5, 0)
+    btnKill.FontFace = Font.new("rbxasset://fonts/faces/Font.ttf", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+    btnKill.Text = "💀" -- Эмодзи черепа
+    btnKill.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btnKill.TextScaled = true
+
+    -- Кнопка 2: Подбросить 🪄
+    local btnJump = Instance.new("TextButton", frame)
+    btnJump.AutoButtonColor = false
+    btnJump.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    btnJump.BackgroundTransparency = 0.8
+    btnJump.Size = UDim2.new(0, 60, 0, 60)
+    btnJump.Position = UDim2.new(0, 0, -0.5, 0)
+    btnJump.FontFace = Font.new("rbxasset://fonts/faces/Font.ttf", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+    btnJump.Text = "🪄" -- Эмодзи ракеты
+    btnJump.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btnJump.TextScaled = true
+
+    -- Кнопка 3: Толкать 🧊
+    local btnPush = Instance.new("TextButton", frame)
+    btnPush.AutoButtonColor = false
+    btnPush.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    btnPush.BackgroundTransparency = 0.8
+    btnPush.Size = UDim2.new(0, 60, 0, 60)
+    btnPush.Position = UDim2.new(0.5, 0, -0.5, 0)
+    btnPush.FontFace = Font.new("rbxasset://fonts/faces/Font.ttf", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+    btnPush.Text = "🧊" -- Эмодзи руки
+    btnPush.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btnPush.TextScaled = true
+
+    -- Обработчик кликов по кнопкам
+    local function onClick(action)
+        if currentTarget and currentTarget.Humanoid.Health > 0 then
+            if action == "kill" then
+                currentTarget.Humanoid.Health = 0
+                if highlightObject then
+                    highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
+                    task.wait(0.1)
+                    highlightObject.Color3 = Color3.fromRGB(0, 255, 0)
+                end
+            elseif action == "jump" then
+                local root = currentTarget:FindFirstChild("HumanoidRootPart")
+                if root then
+                    root.Velocity = Vector3.new(0, 80, 0)
+                end
+            elseif action == "push" then
+                local myPos = player.Character:FindFirstChild("HumanoidRootPart").Position
+                local theirPos = currentTarget:FindFirstChild("HumanoidRootPart").Position
+                local direction = (myPos - theirPos).Unit * 40
+
+                local bv = Instance.new("BodyVelocity", currentTarget:FindFirstChild("UpperTorso"))
+                bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                bv.P = 12000
+                bv.Velocity = direction
+                wait(0.2)
+                bv:Destroy()
+            end
+        end
+        
+        -- Скрываем меню после нажатия
+        destroyMenu()
+    end
+
+    btnKill.Activated:Connect(function() onClick("kill") end)
+    btnJump.Activated:Connect(function() onClick("jump") end)
+    btnPush.Activated:Connect(function() onClick("push") end)
+
+    actionMenu = {
+        Gui = gui,
+        UpdatePosition = function(x, y)
+            frame.Position = UDim2.new(
+                x / workspace.CurrentCamera.ViewportSize.X - 0.5,
+                y / workspace.CurrentCamera.ViewportSize.Y - 0.5
+            )
+        end
+    }
+
+    return actionMenu
+end
+
+local function destroyMenu()
+    if actionMenu then
+        actionMenu.Gui:Destroy()
+        actionMenu = nil
+    end
+end
 
 -- 🕸️ Отслеживание мыши для выбора цели
 mouse.TargetChanged:Connect(function(newTarget)
@@ -51,7 +162,7 @@ mouse.TargetChanged:Connect(function(newTarget)
         local char = newTarget.Parent
         local hum = char:FindFirstChildOfClass("Humanoid")
         
-        -- Проверка: это живой игрок? Не я ли это?
+        -- Проверки: это живой игрок? Не я ли это?
         if hum and char ~= player.Character and hum.Health > 0 then
             -- Создаем/обновляем рамку
             highlightObject = createHighlight(char)
@@ -62,71 +173,47 @@ mouse.TargetChanged:Connect(function(newTarget)
                 -- Выводим ник над головой
                 showNameTag(char.HumanoidRootPart, plr.Name)
             else
-                -- Если не удалось получить игрока из системы, просто выводим название модели
                 showNameTag(char.HumanoidRootPart, char.Name)
             end
 
             -- Запоминаем текущую цель
             currentTarget = char
+
+            -- Показываем наше меню
+            destroyMenu()
+            createActionMenu().UpdatePosition(mouse.X, mouse.Y)
         elseif highlightObject then
             -- Убираем старую рамку, если цель потеряна
             highlightObject:Destroy()
             highlightObject = nil
             currentTarget = nil
+            destroyMenu()
         end
     elseif highlightObject then
         -- Убираем старую рамку, если мы смотрим в пустоту
         highlightObject:Destroy()
         highlightObject = nil
         currentTarget = nil
+        destroyMenu()
     end
 end)
 
--- 🎮 Назначаем действия на кнопки МЫШИ через ContextActionService
-local function onInput(actionName, inputState, inputObj)
-    if inputState == Enum.UserInputState.Begin then
-        if actionName == "LeftClick" then
-            -- Левая кнопка мыши: мгновенная смерть
-            if currentTarget then
-                local humanoid = currentTarget:FindFirstChildOfClass("Humanoid")
-                if humanoid and humanoid.Health > 0 then
-                    humanoid.Health = 0 
-                    
-                    -- Красная вспышка рамки при убийстве
-                    if highlightObject then
-                        highlightObject.Color3 = Color3.fromRGB(255, 60, 60)
-                        task.wait(0.1)
-                        highlightObject.Color3 = Color3.fromRGB(0, 255, 0)
-                    end
-                end
-            end
-        elseif actionName == "RightClick" then
-            -- Правая кнопка мыши: подбросить вверх
-            if currentTarget then
-                local root = currentTarget:WaitForChild("HumanoidRootPart")
-                if root then
-                    root.Velocity = Vector3.new(0, 80, 0) -- Подбрасывает высоко в воздух
-                end
-            end
-        elseif actionName == "KeyQ" then
-            -- Клавиша Q: Оттолкнуть от себя
-            if currentTarget then
-                local myPos = player.Character:WaitForChild("HumanoidRootPart").Position
-                local theirPos = currentTarget:WaitForChild("HumanoidRootPart").Position
-                local direction = (myPos - theirPos).Unit * 40 -- Направление от них к нам
+-- 🌐 Следим за движением мыши, чтобы двигалось и меню
+RunService.RenderStepped:Connect(function()
+    if actionMenu then
+        actionMenu.UpdatePosition(mouse.X, mouse.Y)
+    end
+end)
 
-                local bv = Instance.new("BodyVelocity", currentTarget:WaitForChild("UpperTorso"))
-                bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                bv.P = 12000
-                bv.Velocity = direction
-                wait(0.2)
-                bv:Destroy()
-            end
+-- 👉 Ловим клик по экрану вне нашего меню
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end                     -- Игнорируем события ввода в чат
+
+    -- Если нажата любая кнопка мыши, а курсор НЕ внутри наших кнопок
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.MouseButton2 then
+        if actionMenu and not actionMenu.Gui:FindFirstAncestorWhichIsA("TextButton"):IsMouseOver() then
+            destroyMenu()
         end
     end
-end
-
--- Регистрируем наши действия в ContextActionService
-ContextActionService:BindAction("LeftClick", onInput, false, Enum.UserInputType.MouseButton1)
-ContextActionService:BindAction("RightClick", onInput, false, Enum.UserInputType.MouseButton2)
-ContextActionService:BindAction("KeyQ", onInput, false, Enum.KeyCode.Q)
+end)
