@@ -1,8 +1,6 @@
 -- ⚙️ Настройки скрипта
 local MESSAGE_DURATION = 3 -- Время отображения сообщения (секунды)
 
--- 🛡️ Защита от повторного запуска
-if script.Parent then return end
 
 -- 🖥️ Подключение к сервисам Roblox
 local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
