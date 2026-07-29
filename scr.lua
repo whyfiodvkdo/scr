@@ -40,6 +40,9 @@ local function toggleModule()
     hint.Parent = workspace
     task.wait(2)
     hint:Destroy()
+
+    -- ❗️ Ключевое изменение здесь — создание рамки сразу при активации!
+    createHighlight(player.Character or workspace.CurrentCamera)
 end
 
 -- Основной цикл слежения за мышью
@@ -80,7 +83,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
                 hum.Health = 0 
                 
                 -- Красная вспышка при убийстве
-                highlight.Color3 = Color3.fromRGB(255, 0, 0)
+                highlight.Color3 = Color3.fromRGB(250, 60, 60)
                 task.wait(0.1)
                 highlight.Color3 = Color3.fromRGB(0, 255, 0)
             end
@@ -91,6 +94,9 @@ end)
 -- Автоматическая чистка при выходе персонажа
 player.CharacterAdded:Connect(function(char)
     -- Ждем немного, чтобы персонаж появился в мире
+    task.wait(0.5)
+    createHighlight(player.Character) -- Рамка всегда будет зеленой у своего персонажа
+end)
     task.wait(0.5)
     createHighlight(player.Character) -- Рамка всегда будет зеленой у своего персонажа
 end)
