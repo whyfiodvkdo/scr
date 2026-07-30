@@ -5,14 +5,18 @@ local function Init()
     local UserInputService = game:GetService("UserInputService")
     local RunService = game:GetService("RunService")
     
-    -- === НАСТРОЙКИ ===
+    -- === НАСТРОЙКИ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
     local player = Players.LocalPlayer
-    local mouse = player:GetService("Mouse")
-    local character = player.Character or player.CharacterAdded:Wait()
-    local rootPart = character and character.PrimaryPart
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local mouse = player:WaitForChild("Mouse", 15)
+    if not mouse then return end
 
-    -- Минимальная пауза между ударами (секунды)
+    local character = player.Character or player.CharacterAdded:Wait(15) 
+    if not character then return end
+
+    local rootPart = character.PrimaryPart
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+    -- Минимальная пауза между ударами (секунды). Динамически адаптируется.
     local ATTACK_COOLDOWN = 0.7  
     -- Таймстамп последней успешной атаки
     local LastAttackTime = tick()   
@@ -46,7 +50,7 @@ local function Init()
         return nil
     end
 
-    -- Генерация тестовых пакетов для пробива защиты
+    -- Генерация тестовых пакетов данных
     local function generateTestPackets(target)
         return {
             target.Name,
@@ -70,8 +74,8 @@ local function Init()
             if obj:IsA("RemoteEvent") then table.insert(weapons, obj) end
         end
 
-        -- Ищем вызовы событий внутри клиентских скриптов (LocalScripts)
-        -- Это важно! Часто разработчики прячут эвенты внутри функций, а не просто оставляют их висящими в RS/WS.
+        -- Ищем вызовы событий внутри клиентских скриптов (LocalScripts).
+        -- Это критически важно, так как многие игровые механики реализованы именно таким образом.
         for _, script in ipairs(game:GetService("Lighting"):GetChildren()) do
             if script:IsA("LocalScript") then
                 local src = script.Source
@@ -95,7 +99,7 @@ local function Init()
         local victimHum = Target.Hum
         local currentHealth = victimHum.Health
 
-        -- Пробуем разные форматы данных
+        -- Пробуем отправить лучший известный пакет данных
         local payloads = #DamageLibrary[remoteData.Name] == 0 and generateTestPackets(Target) or {DamageLibrary[remoteData.Name].bestPayload}
 
         for i, data in ipairs(payloads) do
@@ -187,6 +191,7 @@ local function Init()
     end)
 
     -- === АВТОМАТИЧЕСКИЙ БОЙ ПО ЛКМ ===
+    -- Объединенный обработчик всех клавиш
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
 
@@ -248,31 +253,34 @@ local function Init()
                 n("Error: No weapon selected.")
             end
         end
-    end)
 
-    -- === РЕЖИМ ПЕСОЧНИЦЫ (Sandbox Mode): Автоматический сбор информации ===
-    -- Этот режим заставляет вашего персонажа бегать по карте и кликать мышью,
-    -- что помогает найти хит-боксы и скрытые триггеры.
-    UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-
-        -- F9: Включить/выключить Песочницу
+        -- Управление режимом Песочницы
         if input.KeyCode == Enum.KeyCode.F9 then
             isProfiling = not isProfiling
             n(isProfiling and "Sandbox mode ON" or "Sandbox mode OFF")
         end
+
+        -- Отключение уведомлений
+        if input.KeyCode == Enum.KeyCode.KeypadZero then
+            NotificationsEnabled = not NotificationsEnabled
+            n(NotificationsEnabled and "Notifications enabled" or "Notifications disabled")
+        end
     end)
 
-    -- Логика песочницы
+    -- === РЕЖИМ ПЕСОЧНИЦЫ (Sandbox Mode): Автоматический сбор информации ===
+    -- Этот режим заставляет вашего персонажа бегать по карте и кликать мышью,
+    -- чтобы найти хит-боксы и скрытые триггеры.
     task.spawn(function()
         while wait() do
             if not isProfiling then continue end
 
             -- Перемещаемся по карте
             if rootPart then
-                local newPos = Vector3.new(math.random(-workspace.Terrain.Size.X / 2, workspace.Terrain.Size.X / 2),
-                                          10, -- Высота над землей
-                                          math.random(-workspace.Terrain.Size.Z / 2, workspace.Terrain.Size.Z / 2))
+                local newPos = Vector3.new(
+                    math.random(-workspace.Terrain.Size.X / 2, workspace.Terrain.Size.X / 2),
+                    10, -- Высота над землей
+                    math.random(-workspace.Terrain.Size.Z / 2, workspace.Terrain.Size.Z / 2)
+                )
                 rootPart.CFrame = CFrame.new(newPos)
                 task.wait(0.1)
                 humanoid.Jump = true -- Имитация активности
@@ -294,18 +302,7 @@ local function Init()
         end
     end)
 
-    -- === УПРАВЛЕНИЕ ИНТЕРФЕЙСОМ ===
-    UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-
-        -- NUMPAD0: Включить/выключить уведомления
-        if input.KeyCode == Enum.KeyCode.KeypadZero then
-            NotificationsEnabled = not NotificationsEnabled
-            n(NotificationsEnabled and "Notifications enabled" or "Notifications disabled")
-        end
-    end)
-
-    -- Визуализация цели
+    -- === ВИЗУАЛИЗАЦИЯ ЦЕЛИ ===
     local hl = nil
     RunService.RenderStepped:Connect(function()
         if Target and Target.Hum.Health > 0 then
