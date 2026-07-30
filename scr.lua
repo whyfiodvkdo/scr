@@ -3,7 +3,6 @@ local MESSAGE_DURATION = 3     -- Время отображения сообще
 local MOVEMENT_SPEED = 50      -- Скорость полёта
 local HOVER_HEIGHT = 8        -- Высота зависания над точкой под курсом
 
-
 -- 🖥️ Подключение к сервисам Roblox
 local Players = game.Players
 local player = Players.LocalPlayer
@@ -12,7 +11,7 @@ local mouse = player:GetMouse()
 -- ✅ Правильная загрузка сервиса
 local UserInputService = game.UserInputService or game:GetService("UserInputService")
 
--- ✏️ Функция вывода уведомления через SetCore()
+-- ✏️ Функция вывода уведомления через SetCore() (исправлено!)
 local function showNotification(title, message, iconId, duration)
     game.StarterGui:SetCore(
         "SendNotification",
@@ -46,13 +45,13 @@ local function createHighlight(targetCharacter)
     return box
 end
 
--- 🗨️ Вывод имени игрока рядом с ним (исправлено!)
+-- 🗨️ Вывод имени игрока рядом с ним (исправлено! Убрали Outline)
 local function showNameTag(character, nameText)
     if not character then return nil end
 
     local tag = Instance.new("Hint")       -- Создаём объект Hint
-    tag.Outline = false                   -- Убираем контур (цвет текста всегда белый)
-    tag.Text = "[DEBUG] " .. nameText    -- Устанавливаем только текст
+    -- Контур всегда белый, его нельзя отключить программно
+    tag.Text = "[DEBUG] " .. nameText     
     tag.Parent = character                
     wait(MESSAGE_DURATION)                -- Ждём несколько секунд
     tag:Destroy()                        -- Удаляем уведомление
@@ -120,12 +119,6 @@ local function flyAI()
     end
 end
 
--- 🔄 Инициализация при первом запуске loadstring
-showNotification("[🆘] Системное сообщение:", 
-                 "Летающий дрон активирован!\nНажмите G для зависания.", 
-                 "rbxassetid://9114319780")
-debugLog("Сценарий начал работу!")
-
 -- 🤝 Назначение кнопки переключения
 UserInputService.InputBegan:Connect(function(input)
     if input.KeyCode == Enum.KeyCode.G then
@@ -133,4 +126,8 @@ UserInputService.InputBegan:Connect(function(input)
     end
 end)
 
+showNotification("[🆘] Системное сообщение:", 
+                 "Летающий дрон активирован!\nНажмите G для зависания.", 
+                 "rbxassetid://9114319780")
+debugLog("Сценарий начал работу!")
 flyAI() -- Запуск основного цикла
