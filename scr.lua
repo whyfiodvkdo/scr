@@ -1,39 +1,37 @@
--- Auto-Execute Profiler v2.0: Real Server Calls & Safe Mode
+-- Phantom Hitbox Killer v1.0: Remote Call Profiler & Physical Trigger
+--
+-- Этот инструмент находит эвент нанесения урона в игре,
+-- создает временный физический объект вокруг цели и имитирует касание.
+-- Это заставляет сервер обработать урон как легальное действие.
 
 local function Init()
-    -- === SERVICES & PLAYER ===
-    -- *ВАЖНОЕ ИСПРАВЛЕНИЕ*: Используем правильную функцию верхнего уровня GetService
     local Players = game.GetService("Players")
     local ReplicatedStorage = game.GetService("ReplicatedStorage")
     local RunService = game.GetService("RunService")
     local UserInputService = game.GetService("UserInputService")
 
-    -- Ждём появления игрока и мыши
-    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+    -- === STATE ===
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait() 
     if not player then return end
 
-    -- ⚙️ Защита от ошибок при получении мыши
-    -- Если игрок ещё не вошёл полностью в игру, :GetMouse может вернуть nil
-    local mouse
-    repeat wait(0.1) until pcall(function() mouse = player:GetMouse() end)
-
-    -- === STATE ===
     -- ⚙️⚙️ НАСТРОЙКИ БЕЗОПАСНОСТИ ⚙️⚙️
     -- Если true - скрипт НЕ отправляет ничего на сервер. Только анализирует.
     -- ЕСЛИ FALSE — РЕАЛЬНЫЕ вызовы FireServer/InvokeServer.
     local isSafeMode = false -- <--- РАБОЧИЙ РЕЖИМ ВКЛЮЧЕН!
 
-    local Victim = nil              -- {Char=Model, Hum=Humanoid, Name=string}
+    -- Объекты состояния
+    local Victim = nil              -- {Char=Model, Hum=Humanoid, Root=Part}
     local BestWeaponInfo = nil      -- {remote=Instance, payload=payload, dmg=number}
     local MaxSimulatedDamage = -1
     local isProfiling = false
-    local profileQueue = {}         -- {remote=Instance, payload=payload}
+    local profileQueue = {}         -- Очередь тестов
     local lastKnownHealth = 0
-    local hl = nil
+    local hl = nil                 -- Highlight для визуализации цели
 
     local ATTACK_COOLDOWN = 0.7     -- Минимальная пауза между ударами
     local LastAttackTime = tick()   
 
+    -- Вспомогательные функции
     local function notify(text)
         pcall(function()
             game.StarterGui:SetCore("SendNotification", {
@@ -46,59 +44,88 @@ local function Init()
 
     -- Безопасная проверка цели под курсором
     local function getTarget()
-        if not mouse then return nil end
         local targetPart = mouse.Target
         if not targetPart then return nil end
         local model = targetPart:FindFirstAncestorWhichIsA("Model")
         if not model then return nil end
         local hum = model:FindFirstChildOfClass("Humanoid")
         local root = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
-        if hum and hum.Health > 0 and model ~= (player.Character or player.CharacterAdded:Wait()) and root then
+        if hum and hum.Health > 0 and model ~= player.Character and root then
             return {Char = model, Hum = hum, Root = root, Name = model.Name}
         end
         return nil
     end
 
-    -- Стандартные тестовые полезности (Payloads)
+    -- Создание фантомного хитбокса
+    local function CreatePhantomHitbox(target)
+        if not target.Root then return nil end
+
+        local phantom = Instance.new("Part", workspace)
+        phantom.Anchored = true          -- Не двигается под действием физики
+        phantom.CanCollide = false       -- Проходимый для других объектов
+        phantom.Transparency = 0.65       -- Для отладки можно сделать видимым
+        phantom.Material = Enum.Material.Neon
+        phantom.Color = Color3.fromRGB(255, 0, 0) -- Красный цвет
+
+        -- Ставим его так, чтобы цель была полностью внутри него
+        phantom.Size = target.Root.Size * Vector3.new(1.5, 1.8, 1.5)
+        phantom.CFrame = target.Root.CFrame * CFrame.new(0, 0.9, 0) -- Немного выше головы
+
+        -- Имитация физического взаимодействия
+        firetouchinterest(phantom, target.Root, 0) -- Начало контакта
+        wait(0.1)
+        firetouchinterest(phantom, target.Root, 1) -- Конец контакта
+
+        task.delay(1, function()
+            phantom:Destroy() -- Удаляем после использования
+        end)
+
+        return phantom
+    end
+
+    -- Генерация тестовых полезных нагрузок (Payloads)
     -- payload = { args = {...}, isTableSingleArg = boolean, desc = string }
     local function generatePayloads(targetName, targetHum)
         local t = {}
+        
         table.insert(t, {args = {targetName, 9999}, isTableSingleArg = false, desc = "(name, number)"})          -- Common damage format
         table.insert(t, {args = {targetHum}, isTableSingleArg = false, desc = "(Humanoid)"})                     -- Passing Humanoid directly
-        table.insert(t, {args = {{Victim = targetName, Damage = math.huge, Part = targetHum.RootPart}}, isTableSingleArg = true, desc = "{Victim=..,Damage=..,Part=..}"}) -- Table with fields
+        table.insert(t, {args = {{Victim = targetName, Damage = math.huge}}, isTableSingleArg = true, desc = "{Victim=..,Damage=..}"}) -- Table with fields
         table.insert(t, {args = {{{player = player, enemy = targetName, dmg = math.huge}}}, isTableSingleArg = true, desc = "{{player=..,enemy=..,dmg=..}}"}) -- Nested map-like table
         table.insert(t, {args = {"GodWeapon_Debug"}, isTableSingleArg = false, desc = "(string)"})                 -- Debug strings
         table.insert(t, {args = {targetName}, isTableSingleArg = false, desc = "(name only)"})                    -- Just name
+
         return t
     end
 
     -- Сбор всех удалённых объектов в игре
     local function collectRemotes()
         local remotes = {}
-        local function scan(container)
-            for _, obj in pairs(container:GetDescendants()) do
-                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-                    table.insert(remotes, obj)
+
+        -- Стандартные места
+        for _, obj in pairs({ReplicatedStorage, workspace}) do
+            for _, child in ipairs(obj:GetDescendants()) do
+                if child.ClassName == "RemoteEvent" or child.ClassName == "RemoteFunction" then
+                    table.insert(remotes, child)
                 end
             end
         end
-        -- Standard places
-        scan(ReplicatedStorage)
-        scan(workspace)
-        -- Special folders
-        if ReplicatedStorage:FindFirstChild("Remotes") then scan(ReplicatedStorage.Remotes) end
-        if workspace:FindFirstChild("Remotes") then scan(workspace.Remotes) end
-        if workspace:FindFirstChild("_REMOTES") then scan(workspace._REMOTES) end
-        -- Inside players' weapons/models
+
+        -- Внутри моделей других игроков (оружие)
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr.Character then
                 for _, tool in ipairs(plr.Character:GetChildren()) do
                     if tool:IsA("Tool") or string.find(tool.Name, "Weapon", 1, true) then
-                        scan(tool)
+                        for _, remote in ipairs(tool:GetDescendants()) do
+                            if remote.ClassName == "RemoteEvent" or remote.ClassName == "RemoteFunction" then
+                                table.insert(remotes, remote)
+                            end
+                        end
                     end
                 end
             end
         end
+
         return remotes
     end
 
@@ -165,9 +192,80 @@ local function Init()
         end
     end)
 
-    -- Input handling: F1 start profiling, F2 stop, T toggle highlight, X manual shot
+    -- Input handling: F1 start profiling, F2 stop, T toggle highlight, LMB attack
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
+
+        -- Выбор цели ПКМ (для удобства)
+        if input.UserInputType == Enum.UserInputType.MouseButton2 then
+            Victim = getTarget()
+            if Victim then
+                notify("Target locked: " .. Victim.Char.Name)
+            else
+                notify("Target cleared.")
+            end
+        end
+
+        -- АТАКАЕМ ПО ЛКМ (только если есть рабочая точка входа)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if not Victim then 
+                Victim = getTarget()
+                if not Victim then 
+                    notify("Select a target first (RMB).")
+                    return 
+                end
+            end
+
+            local victimHum = Victim.Hum
+            if not victimHum or victimHum.Health <= 0 then return end
+
+            -- Проверка наличия рабочей точки входа
+            if not BestWeaponInfo then
+                notify("No best weapon available yet. Profile a target first.")
+                return
+            end
+
+            local now = tick()
+            if now - LastAttackTime < ATTACK_COOLDOWN then
+                notify(string.format("Cooldown active %.1f sec", ATTACK_COOLDOWN - (now - LastAttackTime)))
+                return
+            end
+
+            LastAttackTime = now
+
+            -- Создаём фантомный хитбокс и имитируем контакт
+            CreatePhantomHitbox(Victim)
+
+            -- Отправляем лучший найденный пакет на сервер
+            if not isSafeMode then
+                local remote = BestWeaponInfo.remote
+                local payload = BestWeaponInfo.payload
+                local success, err
+                if remote.ClassName == "RemoteEvent" then
+                    if payload.isTableSingleArg then
+                        success, err = pcall(remote.FireServer, remote, unpack(payload.args)[1])
+                    else
+                        success, err = pcall(remote.FireServer, remote, unpack(payload.args))
+                    end
+                elseif remote.ClassName == "RemoteFunction" then
+                    if payload.isTableSingleArg then
+                        success, err = pcall(remote.InvokeServer, remote, unpack(payload.args)[1])
+                    else
+                        success, err = pcall(remote.InvokeServer, remote, unpack(payload.args))
+                    end
+                end
+                if not success then
+                    warn("Manual call error:", err)
+                    notify("Error sending packet!")
+                else
+                    notify(string.format("Shot fired via %s | Payload=%s", remote.Name, payload.desc))
+                end
+            else
+                notify("In SAFE MODE. No packets are sent.")
+            end
+        end
+
+        -- Управление профилированием
         if input.KeyCode == Enum.KeyCode.F1 then
             local t = getTarget()
             if t then
@@ -205,8 +303,10 @@ local function Init()
             else
                 notify("Profiling is not running.")
             end
-        elseif input.KeyCode == Enum.KeyCode.T then
-            -- Toggle highlight of current target
+        end
+
+        -- Переключение выделения цели
+        if input.KeyCode == Enum.KeyCode.T then
             if Victim then
                 Victim = nil
                 notify("Highlight disabled.")
@@ -219,55 +319,6 @@ local function Init()
                 else
                     notify("No valid target under cursor.")
                 end
-            end
-        elseif input.KeyCode == Enum.KeyCode.X then
-            -- Manual real shot at the victim
-            if not Victim then
-                Victim = getTarget()
-                if not Victim then
-                    notify("No valid target selected.")
-                    return
-                end
-            end
-
-            if BestWeaponInfo then
-                local now = tick()
-                if now - LastAttackTime < ATTACK_COOLDOWN then
-                    notify(string.format("Cooldown active %.1f sec", ATTACK_COOLDOWN - (now - LastAttackTime)))
-                    return
-                end
-
-                LastAttackTime = now
-
-                -- Вызов на сервер
-                if not isSafeMode then
-                    local remote = BestWeaponInfo.remote
-                    local payload = BestWeaponInfo.payload
-                    local success, err
-                    if remote.ClassName == "RemoteEvent" then
-                        if payload.isTableSingleArg then
-                            success, err = pcall(remote.FireServer, remote, unpack(payload.args)[1])
-                        else
-                            success, err = pcall(remote.FireServer, remote, unpack(payload.args))
-                        end
-                    elseif remote.ClassName == "RemoteFunction" then
-                        if payload.isTableSingleArg then
-                            success, err = pcall(remote.InvokeServer, remote, unpack(payload.args)[1])
-                        else
-                            success, err = pcall(remote.InvokeServer, remote, unpack(payload.args))
-                        end
-                    end
-                    if not success then
-                        warn("Manual call error:", err)
-                        notify("Error sending packet!")
-                    else
-                        notify(string.format("Shot fired via %s | Payload=%s", remote.Name, payload.desc))
-                    end
-                else
-                    notify("In SAFE MODE. No packets are sent.")
-                end
-            else
-                notify("No best weapon available yet. Profile a target first.")
             end
         end
     end)
@@ -300,7 +351,11 @@ local function Init()
         end
     end)
 
-    notifyProfiler loaded. Controls: [F1]=Profile | [F2]=Stop | [T]=Toggle Highlight | [X]=Manual Shot")
+    -- Инициализация мыши
+    local mouse
+    repeat wait(0.1) until pcall(function() mouse = player:GetMouse() end)
+
+    notifyProfiler loaded. Controls: [LMB]=Kill | [RMB]=Lock Target | [F1]=Profile | [F2]=Stop | [T]=Toggle Highlight")
 end
 
 pcall(Init)
