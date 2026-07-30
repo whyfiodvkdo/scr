@@ -1,7 +1,10 @@
 -- ⚙️ Настройки скрипта
 local MESSAGE_DURATION = 3     -- Время отображения сообщений (секунды)
-local HOVER_HEIGHT = 80       -- Высота подъёма при "зависании"
+local HOVER_HEIGHT = 0       -- Высота подъёма при "зависании"
 local HOVER_TIME = 3         -- Длительность зависания (в секундах)
+
+-- 🛡️ Защита от повторного запуска
+if script.Parent then return end
 
 -- 🖥️ Подключение к сервисам Roblox
 local Players = game.Players
@@ -48,17 +51,14 @@ while true do
         repeat wait(0.5) until player.Character and player.Character.HumanoidRootPart
     else
         -- Шаг 1: Выбираем абсолютно случайную точку в пределах игрового мира
-        local mapSizeX = workspace.Terrain.Size.X / 2
-        local mapSizeZ = workspace.Terrain.Size.Z / 2
-
         -- Мы увеличили диапазон, чтобы иногда выпадали точки за краем карты
         local randomPos = Vector3.new(
-            math.random(-mapSizeX*1.2, mapSizeX*1.2),
+            math.random(-workspace.Terrain.Size.X/2 * 1.2, workspace.Terrain.Size.X/2 * 1.2),
             math.random(-100, 100),   -- Может появиться глубоко под землёй или высоко в небе!
-            math.random(-mapSizeZ*1.2, mapSizeZ*1.2)
+            math.random(-workspace.Terrain.Size.Z/2 * 1.2, workspace.Terrain.Size.Z/2 * 1.2)
         )
 
-        -- Шаг 2: Телепортация
+        -- МГНОВЕННАЯ ТЕЛЕПОРТАЦИЯ без проверки пола
         player.Character.HumanoidRootPart.CFrame = CFrame.new(randomPos)
         
         -- Логируем координаты и зону
