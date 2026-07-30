@@ -1,30 +1,28 @@
 local Players = game.Players
 local player = Players.LocalPlayer or Players.LocalPlayer
 
--- ✏️ Функция вывода структуры инструмента
+-- Функция вывода структуры инструмента
 local function printToolStructure(tool)
-    -- 1. Выводим все числовые свойства
-    for propName, value in pairs(tool:GetProperties()) do
-        if type(value) == 'number' then
-            debugLog(string.format("[DEBUG] Свойство %s = %.0f", propName, value))
-        end
-    end
-
-    -- 2. Выводим иерархию объектов внутри инструмента
     local indent = ""
+    
+    -- Рекурсивный обход дерева объектов
     local function recursivePrint(obj, level)
         indent = string.rep(" ", level * 4)
         
-        -- Проверяем тип объекта
         if obj.ClassName == "LocalScript" then
             debugLog(indent .. "[SCRIPT]: " .. obj.Name)
             
-            -- Ищем ВСЕ методы внутри скрипта через метатаблицу
-            for k, v in pairs(getmetatable(obj)) do
-                if type(v) == 'function' then
-                    debugLog(indent .. "  -> Обнаружена функция: " .. k)
+            -- Ищем все методы скрипта через метатаблицу
+            for name, func in pairs(getmetatable(obj)) do
+                -- Проверка наличия ключевых слов в названии
+                if type(func) == 'function' and (
+                    name:match(".*Button.*") or
+                    name:match(".*Attack.*") or
+                    name:match(".*Hit.*")
+                ) then
+                    debugLog(indent .. "  -> Обнаружена функция атаки: " .. name)
                 elseif type(v) == 'table' and rawget(v, "__index") then
-                    debugLog(indent .. "  -> Таблица: " .. k)
+                    debugLog(indent .. "  -> Таблица: " .. name)
                 end
             end
         elseif obj.ClassName == "ProximityPrompt" then
@@ -33,7 +31,6 @@ local function printToolStructure(tool)
             debugLog(indent .. "[OBJ]: " .. obj.Name .. " (" .. obj.ClassName .. ")")
         end
 
-        -- Рекурсивно проходим по всем детям
         for _, child in ipairs(obj:GetChildren()) do
             recursivePrint(child, level + 1)
         end
@@ -46,10 +43,11 @@ coroutine.wrap(function()
     while true do
         local activeTool = nil
 
-        if not player.Character then wait(0.5) continue end
+        -- Находим ТОЛЬКО активный инструмент в руках персонажа
+        if not player.Character then wait(0.2); continue end
 
         for _, tool in ipairs(player.Character:GetChildren()) do
-            if tool.ClassName == "Tool" and tool.Parent == player.Character then
+            if tool.ClassName == "Tool" then
                 activeTool = tool
                 break
             end
@@ -59,37 +57,33 @@ coroutine.wrap(function()
             debugLog("\n[SCANNER] Анализируем активный инструмент: " .. activeTool.Name)
             printToolStructure(activeTool)
 
-            -- ⚙️ Безопасная активация атак
-            -- Нажимаем кнопку атаки (если есть ProximityPrompt)
-            local prompt = activeTool:FindFirstChildOfClass("ProximityPrompt")
-            if prompt then 
-                pcall(fireproximyprompt, prompt) -- Защищённый вызов
-            end
-
-            -- Имитация стандартных событий мыши ВНУТРИ скриптов оружия
-            for _, script in pairs(activeTool:GetChildren()) do
+            -- Активируем найденные функции атак
+            for _, script in ipairs(activeTool:GetChildren()) do
                 if script.ClassName ~= "LocalScript" then continue end
 
-                -- Используем защищённые вызовы для каждого потенциального события
-                pcall(script.MouseButton1Down.Fire, script.MouseButton1Down)
-                pcall(script.OnButton1Down.Fire, script.OnButton1Down)
-                pcall(script.Attack.Fire, script.Attack)
-                
-                -- Дополнительно проверяем Метатаблицу скрипта
+                -- Получаем Метатаблицу скрипта
                 local meta = getmetatable(script)
-                if meta then
-                    for name, func in pairs(meta) do
-                        if type(func) == 'function' and 
-                            (name == "OnButton1Down" or name == "Attack" or name == "Hit" or name == "Activate") then
-                                pcall(func, script) -- Вызываем найденные функции атак
-                        end
+                if not meta then continue end
+
+                -- Вызываем ВСЕ обнаруженные функции атак
+                for name, func in pairs(meta) do
+                    if type(func) == 'function' and (
+                        name:match(".*Button.*") or
+                        name:match(".*Attack.*") or
+                        name:match(".*Hit.*")
+                    ) then
+                        pcall(func, script) -- Защищённый вызов
                     end
                 end
             end
+
+            -- Дополнительно нажимаем кнопку атаки (если есть ProximityPrompt)
+            local prompt = activeTool:FindFirstChildOfClass("ProximityPrompt")
+            if prompt then pcall(fireproximyprompt, prompt) end
         else
-            debugLog("[INFO] Инструмент не найден.")
+            wait(0.2)
         end
 
-        wait(3) -- Повторяем сканирование каждые 3 секунды
+        wait(0.3) -- Повторяем сканирование каждые 0.3 секунды
     end
 end)()
