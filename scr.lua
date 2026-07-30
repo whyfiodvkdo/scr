@@ -1,17 +1,24 @@
 local Players = game.Players
 
+-- Ждём появления LocalPlayer и его Character
 repeat wait() until Players.LocalPlayer and Players.LocalPlayer.Character
-
-local player = Players.LocalMouse or Players.LocalPlayer
 
 coroutine.wrap(function()
     while true do
-        local activeTool = nil
+        local activeTool = nil -- Переменная для хранения активного инструмента
 
+        if not player then
+            -- Получаем локального игрока только один раз при старте
+            player = game.Players.LocalPlayer or nil
+        end
+
+        -- Проверяем наличие модели персонажа
         if not player.Character then 
             debugLog("[DEBUG] Персонаж ещё не готов.")
-            wait(0.5) continue end
+            wait(0.5) continue
+        end
 
+        -- Ищем активный инструмент в руках персонажа
         for _, tool in ipairs(player.Character:GetChildren()) do
             if tool.ClassName == "Tool" then
                 activeTool = tool
@@ -20,23 +27,23 @@ coroutine.wrap(function()
         end
 
         if activeTool then
-            -- ⚙️ Автоматическое нажатие кнопки атаки через ProximityPrompt
+            -- ⚙️ 1. Автоматическое нажатие кнопки атаки через ProximityPrompt
             local prompt = activeTool:FindFirstChildOfClass("ProximityPrompt")
             pcall(fireproximyprompt, prompt)
 
-            -- ⚙️ Универсальная имитация атаки: пробуем ЛКМ, затем Q
+            -- ⚙️ 2. Имитация стандартного клика мышью (ЛКМ или Q)
             local mouse = player:GetMouse()
             if mouse then
-                -- Сначала пытаемся нажать левую кнопку мыши
+                -- Пробуем нажать левую кнопку мыши
                 pcall(mouse.Button1Down.Fire, mouse.Button1Down)
                 
                 -- Если игра настроена на клавиатуру, используем q
                 pcall(mouse.KeyDown, "q")
             else
-                debugLog("[DEBUG] Не удалось найти объект Mouse.")
+                debugLog("[DEBUG] Не удалось получить Mouse.")
             end
 
-            -- ⚙️ Активируем все анимационные контроллеры (для старых игр)
+            -- ⚙️ 3. Активируем все анимационные контроллеры (для старых игр)
             local animController = player.Character:FindFirstChildWhichIsA("Animator")
             if animController then
                 for _, track in ipairs(animController:GetPlayingAnimationTracks()) do
@@ -44,10 +51,10 @@ coroutine.wrap(function()
                 end
             end
 
-            -- ⚙️ Запускаем LocalScript'ы оружия
+            -- ⚙️ 4. Запускаем LocalScript'ы внутри оружия
             for _, script in ipairs(activeTool:GetChildren()) do
                 if script.ClassName ~= "LocalScript" then continue end
-                script.Disabled = false
+                script.Disabled = false -- Просто включаем скрипт
             end
         else
             wait(0.5)
