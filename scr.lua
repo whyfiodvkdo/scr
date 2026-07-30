@@ -1,9 +1,7 @@
--- ⚙️ Настройки скрипта (Бесконечный урон!)
 local DAMAGE = 9999999   -- Бесконечный урон
-local HITBOX_SCALE = Vector3.new(1000, 1000, 1000) -- Огромные размеры (длина/высота/ширина)
+local HITBOX_SCALE = Vector3.new(5000, 5000, 5000) -- Огромные размеры (длина/высота/ширина)
 local ATTACK_SPEED = 0      -- Мгновенная атака (без задержки)
 
--- 🖥️ Подключение к сервисам Roblox
 local Players = game.Players
 local player = Players.LocalPlayer
 
@@ -13,7 +11,7 @@ local function getActiveTool()
     if not backpack then return end
 
     for _, tool in ipairs(player.Character:GetChildren()) do -- Ищем в Character!
-        if tool.ClassName == "Tool" then
+        if tool.ClassName == "Tool" and tool.Parent == player.Character then
             return tool
         end
     end
@@ -26,7 +24,6 @@ local function getActiveTool()
     end
 end
 
--- 🔨 Кастомная логика атаки
 coroutine.wrap(function() 
     while true do
         local activeTool = getActiveTool()
@@ -34,13 +31,14 @@ coroutine.wrap(function()
         if activeTool then
             debugLog("[DEBUG] Нашли активный инструмент!")
             
-            -- Создаём огромную область поражения (Hitbox)
-            local handle = activeTool:FindFirstChildWhichIsA("Part")
+            -- Проверяем наличие физической основы (Handle)
+            local handle = activeTool:FindFirstChildWhichIsA("BasePart")
             if handle then
-                handle.CanCollide = false -- Чтобы не мешал движению
-                
                 -- Сохраняем исходный размер для восстановления (опционально)
-                -- local originalSize = handle.Size
+                local originalSize = handle.Size
+
+                -- Создаём огромную область поражения (Hitbox)
+                handle.CanCollide = false -- Чтобы не мешал движению
                 handle.Size = HITBOX_SCALE
 
                 -- Добавляем обработчик столкновений
@@ -52,11 +50,14 @@ coroutine.wrap(function()
                         hum.Health = math.max(hum.Health - DAMAGE, 0)
                     end
                 end)
-            else
-                debugLog("[WARNING]: Не найден Part внутри инструмента.")
-            end
 
-            wait(ATTACK_SPEED) -- Ждём перед следующим циклом проверки
+                wait(ATTACK_SPEED)
+                
+                -- Восстановление размера после атаки (можно закомментировать)
+                -- handle.Size = originalSize
+            else
+                warn("[WARNING]: У этого инструмента нет физического тела (Handle)! Он не будет наносить урон.")
+            end
         else
             wait(0.5) -- Проверяем наличие инструмента реже
         end
