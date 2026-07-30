@@ -5,14 +5,18 @@ local player = Players.LocalPlayer or nil
 coroutine.wrap(function()
     while true do
         local myChar = player.Character
-        if not myChar then 
+        
+        -- ✅ Проверка наличия PrimaryPart, чтобы избежать ошибок "attempt to index a nil"
+        if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then 
             debugLog("[DEBUG] Персонаж ещё не готов.")
-            wait(0.5) continue
+            wait(0.5)
+            continue
         end
 
         for _, other in ipairs(Players:GetChildren()) do
             if other ~= player and other.Character then -- Игнорируем себя и проверяем наличие модели
-                local distance = (myChar.PrimaryPart.Position - other.Character.PrimaryPart.Position).Magnitude
+                -- Используем HumanoidRootPart вместо PrimaryPart для большей надёжности
+                local distance = (myChar.HumanoidRootPart.Position - other.Character.HumanoidRootPart.Position).Magnitude
                 
                 -- Радиус действия: 720 метров
                 if distance <= 720 then
