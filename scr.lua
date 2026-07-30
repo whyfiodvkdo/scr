@@ -1,17 +1,21 @@
-local script = [[
-
 -- Auto-Execute Profiler v2.0: Real Server Calls & Safe Mode
 
 local function Init()
+    -- === SERVICES & PLAYER ===
+    -- *ВАЖНОЕ ИСПРАВЛЕНИЕ*: Используем правильную функцию верхнего уровня GetService
     local Players = game.GetService("Players")
     local ReplicatedStorage = game.GetService("ReplicatedStorage")
-    local RunService = game:GetService("RunService")
-    local UserInputService = game.GetService(game, "UserInputService") -- Защита от nil
+    local RunService = game.GetService("RunService")
+    local UserInputService = game.GetService("UserInputService")
 
-    local player = Players.LocalPlayer or Players.PlayerAdded:Wait() 
+    -- Ждём появления игрока и мыши
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
     if not player then return end
 
-    local mouse = player:GetMouse and player:GetMouse()
+    -- ⚙️ Защита от ошибок при получении мыши
+    -- Если игрок ещё не вошёл полностью в игру, :GetMouse может вернуть nil
+    local mouse
+    repeat wait(0.1) until pcall(function() mouse = player:GetMouse() end)
 
     -- === STATE ===
     -- ⚙️⚙️ НАСТРОЙКИ БЕЗОПАСНОСТИ ⚙️⚙️
@@ -300,6 +304,3 @@ local function Init()
 end
 
 pcall(Init)
-]]
-
-loadstring(script)()
