@@ -1,8 +1,10 @@
+local script = [[
+
 -- Auto-Execute Profiler v2.0: Real Server Calls & Safe Mode
 
 local function Init()
-    local Players = game:GetService("Players")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Players = game.GetService("Players")
+    local ReplicatedStorage = game.GetService("ReplicatedStorage")
     local RunService = game:GetService("RunService")
     local UserInputService = game.GetService(game, "UserInputService") -- Защита от nil
 
@@ -87,7 +89,7 @@ local function Init()
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr.Character then
                 for _, tool in ipairs(plr.Character:GetChildren()) do
-                    if tool:IsA("Tool") or tool.Name == "Weapon" then
+                    if tool:IsA("Tool") or string.find(tool.Name, "Weapon", 1, true) then
                         scan(tool)
                     end
                 end
@@ -298,3 +300,6 @@ local function Init()
 end
 
 pcall(Init)
+]]
+
+loadstring(script)()
