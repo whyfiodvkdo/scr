@@ -1,139 +1,226 @@
+-- Health Manager (исправленный)
 local function Init()
-    local Players = game.GetService("Players")
-    local UserInputService = game.GetService("UserInputService")
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local StarterGui = game:GetService("StarterGui")
 
-    -- ⚙️ Настройки по умолчанию (можно менять через GUI)
+    -- Настройки по умолчанию (можно менять через GUI)
     local Settings = {
         MaxHealth = 500,
         MinHealthThreshold = 100,
         RegenerationSpeed = 200, -- HP per second
-        ActiveMode = "Shield", -- Shield / Regen
+        ActiveMode = "Shield", -- "Shield" или "Regen"
     }
-
-    -- Инициализация игрока
-    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
-    if not player then return end
-
-    local char = player.Character or player.CharacterAdded:Wait()
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then 
-        notify("Character not found!")
-        return 
-    end
 
     -- Функция уведомления
     local function notify(text)
         pcall(function()
-            game.StarterGui:SetCore("SendNotification", {
+            StarterGui:SetCore("SendNotification", {
                 Title = "Health Manager",
                 Text = tostring(text),
-                Duration = 3})
+                Duration = 3,
+            })
         end)
-        print("" .. tostring(text))
+        print("[HealthManager] " .. tostring(text))
     end
 
-    -- ⚙️ Создание GUI
+    -- Получаем игрока
+    local player = Players.LocalPlayer
+    if not player then
+        player = Players.PlayerAdded:Wait()
+    end
+    if not player then
+        warn("Player не найден.")
+        return
+    end
+
+    local playerGui = player:WaitForChild("PlayerGui")
+
+    -- Переменные персонажа/хуманоид
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then
+        notify("Humanoid не найден в персонаже.")
+        -- продолжим, т.к. CharacterAdded обработчик обновит hum позже
+    end
+
+    -- Обновляем hum при респаунe
+    player.CharacterAdded:Connect(function(c)
+        char = c
+        hum = char:WaitForChild("Humanoid")
+        notify("Character загружен.")
+    end)
+
+    -- Создаём GUI (если уже есть — пересоздаём)
+    local existing = playerGui:FindFirstChild("HealthManager")
+    if existing then
+        existing:Destroy()
+    end
+
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "HealthManager"
-    ScreenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.Parent = playerGui
 
     local MainFrame = Instance.new("Frame")
-    MainFrame.Size = UDim2.new(0, 400, 0, 280)
-    MainFrame.Position = UDim2.new(0.5, -200, 0.5, -140) -- Центр экрана
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = UDim2.new(0, 360, 0, 220)
+    MainFrame.Position = UDim2.new(0.5, -180, 0.5, -110)
     MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     MainFrame.BorderSizePixel = 0
-    MainFrame.Visible = true
     MainFrame.Parent = ScreenGui
 
     -- Заголовок
     local LabelTitle = Instance.new("TextLabel")
-    LabelTitle.Text = "Health Manager v1.0"
-    LabelTitle.Font = Enum.Font.SourceSansBold
-    LabelTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    LabelTitle.BackgroundTransparency = 1
-    LabelTitle.Size = UDim2.new(1, 0, 0, 30)
+    LabelTitle.Size = UDim2.new(1, 0, 0, 28)
     LabelTitle.Position = UDim2.new(0, 0, 0, 0)
+    LabelTitle.BackgroundTransparency = 1
+    LabelTitle.Font = Enum.Font.SourceSansBold
+    LabelTitle.TextSize = 18
+    LabelTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    LabelTitle.Text = "Health Manager v1.0"
     LabelTitle.Parent = MainFrame
 
-    -- Переключатель режимов
-    local DropdownModes = Instance.new("DropDownList")
-    DropdownModes.Position = UDim2.new(0, 10, 0, 40)
-    DropdownModes.Size = UDim2.new(0, 170, 0, 30)
-    DropdownModes.SelectedIndexChanged:Connect(function(index, text)
-        Settings.ActiveMode = text
-        notify(string.format("Active mode set to %s.", text))
-    end)
-    DropdownModes.Parent = MainFrame
-    DropdownModes:AddItem("Shield") -- Щит
-    DropdownModes:AddItem("Regen") -- Регенерация
-    DropdownModes.SelectedIndex = 1
+    -- Mode toggle button
+    local ModeButton = Instance.new("TextButton")
+    ModeButton.Size = UDim2.new(0, 140, 0, 28)
+    ModeButton.Position = UDim2.new(0, 10, 0, 36)
+    ModeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    ModeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ModeButton.Font = Enum.Font.SourceSans
+    ModeButton.TextSize = 16
+    ModeButton.Text = "Mode: " .. Settings.ActiveMode
+    ModeButton.Parent = MainFrame
 
-    -- Слайдер максимального здоровья
-    local SliderMaxHP = Instance.new("NumberSlider")
-    SliderMaxHP.Title = "Max Health:"
-    SliderMaxHP.MinimumValue = 100
-    SliderMaxHP.MaximumValue = 9999
-    SliderMaxHP.Value = Settings.MaxHealth
-    SliderMaxHP.Position = UDim2.new(0, 10, 0, 80)
-    SliderMaxHP.Size = UDim2.new(0, 380, 0, 60)
-    SliderMaxHP.Changed:Connect(function(value)
-        Settings.MaxHealth = value
-        hum.MaxHealth = value
-        notify(string.format("Max Health set to %d.", value))
+    ModeButton.MouseButton1Click:Connect(function()
+        if Settings.ActiveMode == "Shield" then
+            Settings.ActiveMode = "Regen"
+        else
+            Settings.ActiveMode = "Shield"
+        end
+        ModeButton.Text = "Mode: " .. Settings.ActiveMode
+        notify("Active mode set to " .. Settings.ActiveMode)
     end)
-    SliderMaxHP.Parent = MainFrame
 
-    -- Слайдер минимального порога (для режима щита)
-    local SliderMinHP = Instance.new("NumberSlider")
-    SliderMinHP.Title = "Shield Threshold:"
-    SliderMinHP.MinimumValue = 0
-    SliderMinHP.MaximumValue = Settings.MaxHealth
-    SliderMinHP.Value = Settings.MinHealthThreshold
-    SliderMinHP.Position = UDim2.new(0, 10, 0, 150)
-    SliderMinHP.Size = UDim2.new(0, 380, 0, 60)
-    SliderMinHP.Changed:Connect(function(value)
-        Settings.MinHealthThreshold = value
-        notify(string.format("Shield threshold set to %d.", value))
+    -- helper: create label + textbox + apply button
+    local function createSettingRow(y, labelText, initialValue, onApply)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0, 120, 0, 24)
+        lbl.Position = UDim2.new(0, 10, 0, y)
+        lbl.BackgroundTransparency = 1
+        lbl.Font = Enum.Font.SourceSans
+        lbl.TextSize = 14
+        lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+        lbl.Text = labelText
+        lbl.Parent = MainFrame
+
+        local txt = Instance.new("TextBox")
+        txt.Size = UDim2.new(0, 150, 0, 24)
+        txt.Position = UDim2.new(0, 135, 0, y)
+        txt.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        txt.TextColor3 = Color3.fromRGB(255, 255, 255)
+        txt.Font = Enum.Font.SourceSans
+        txt.TextSize = 14
+        txt.Text = tostring(initialValue)
+        txt.ClearTextOnFocus = false
+        txt.Parent = MainFrame
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, 70, 0, 24)
+        btn.Position = UDim2.new(0, 295, 0, y)
+        btn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        btn.Font = Enum.Font.SourceSans
+        btn.TextSize = 14
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Text = "Apply"
+        btn.Parent = MainFrame
+
+        btn.MouseButton1Click:Connect(function()
+            local val = tonumber(txt.Text)
+            if not val then
+                notify("Некорректное значение: " .. tostring(txt.Text))
+                return
+            end
+            onApply(val, txt)
+        end)
+        return txt, btn, lbl
+    end
+
+    -- Max Health
+    local maxTxt = createSettingRow(70, "Max Health:", Settings.MaxHealth, function(val)
+        if val < 1 then val = 1 end
+        Settings.MaxHealth = val
+        if hum then
+            hum.MaxHealth = val
+            hum.Health = math.min(hum.Health, hum.MaxHealth)
+        end
+        notify(string.format("Max Health set to %d.", val))
     end)
-    SliderMinHP.Parent = MainFrame
 
-    -- Слайдер скорости регенерации (для режима бесконечной жизни)
-    local SliderRegen = Instance.new("NumberSlider")
-    SliderRegen.Title = "Regen Speed (per sec):"
-    SliderRegen.MinimumValue = 0
-    SliderRegen.MaximumValue = 1000
-    SliderRegen.Value = Settings.RegenerationSpeed
-    SliderRegen.Position = UDim2.new(0, 10, 0, 220)
-    SliderRegen.Size = UDim2.new(0, 380, 0, 60)
-    SliderRegen.Changed:Connect(function(value)
-        Settings.RegenerationSpeed = value
-        notify(string.format("Regen speed set to %d HP/sec.", value))
+    -- Min threshold (shield)
+    local minTxt = createSettingRow(106, "Shield Threshold:", Settings.MinHealthThreshold, function(val)
+        if val < 0 then val = 0 end
+        if val > Settings.MaxHealth then val = Settings.MaxHealth end
+        Settings.MinHealthThreshold = val
+        notify(string.format("Shield threshold set to %d.", val))
     end)
-    SliderRegen.Parent = MainFrame
 
-    -- ⚙️ Логика работы
-    task.spawn(function()
-        while wait() do
+    -- Regen speed
+    local regenTxt = createSettingRow(142, "Regen Speed (HP/sec):", Settings.RegenerationSpeed, function(val)
+        if val < 0 then val = 0 end
+        Settings.RegenerationSpeed = val
+        notify(string.format("Regen speed set to %d HP/sec.", val))
+    end)
+
+    -- Close button
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Size = UDim2.new(0, 60, 0, 22)
+    CloseBtn.Position = UDim2.new(1, -70, 0, 6)
+    CloseBtn.AnchorPoint = Vector2.new(0, 0)
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 30)
+    CloseBtn.Font = Enum.Font.SourceSansBold
+    CloseBtn.TextSize = 14
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseBtn.Text = "Close"
+    CloseBtn.Parent = MainFrame
+    CloseBtn.MouseButton1Click:Connect(function()
+        ScreenGui:Destroy()
+    end)
+
+    -- Главная логика: использовать Heartbeat для плавной регенерации
+    do
+        local lastDt = 0
+        RunService.Heartbeat:Connect(function(dt)
+            lastDt = dt
+            if not hum then return end
+
             -- Устанавливаем максимум здоровья персонажа
-            hum.MaxHealth = Settings.MaxHealth
+            if hum.MaxHealth ~= Settings.MaxHealth then
+                hum.MaxHealth = Settings.MaxHealth
+            end
 
             if Settings.ActiveMode == "Shield" then
-                -- Режим щита: мгновенное восстановление при падении ниже порога
+                -- Мгновенное восстановление при падении ниже порога
                 if hum.Health < Settings.MinHealthThreshold then
-                    hum.Health = math.min(Settings.MaxHealth, hum.MaxHealth)
+                    hum.Health = math.min(Settings.MaxHealth, Settings.MaxHealth)
                 end
             elseif Settings.ActiveMode == "Regen" then
-                -- Бесконечная регенерация
-                hum:ChangeHealth(Settings.RegenerationSpeed * 0.03) -- 0.03 секунда между итерациями цикла
+                -- Плавная регенерация: прирост = speed * dt
+                if hum.Health < hum.MaxHealth then
+                    local newHealth = math.min(hum.MaxHealth, hum.Health + Settings.RegenerationSpeed * dt)
+                    hum.Health = newHealth
+                end
             else
                 warn("Unknown active mode:", Settings.ActiveMode)
             end
+        end)
+    end
 
-            wait(0.03) -- Оптимальная частота обновления для плавности
-        end
-    end)
-
-    notifyHealth Manager loaded. Use the GUI to configure settings.")
+    notify("Health Manager loaded. Use the GUI to configure settings.")
 end
 
-pcall(Init)
+-- Безопасный запуск
+local ok, err = pcall(Init)
+if not ok then
+    warn("Health Manager failed to start: ", err)
+end
