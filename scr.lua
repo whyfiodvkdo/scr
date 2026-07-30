@@ -1,20 +1,15 @@
--- Passive Observer Killer v3: Dynamic Profiler & Sandbox Mode
+-- Passive Observer Killer v4: Dynamic Profiler & Sandbox Mode
 local function Init()
     local Players = game:GetService("Players")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local UserInputService = game:GetService("UserInputService")
     local RunService = game:GetService("RunService")
     
     -- === НАСТРОЙКИ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
     local player = Players.LocalPlayer
-    local mouse = player:WaitForChild("Mouse", 15)
-    if not mouse then return end
-
-    local character = player.Character or player.CharacterAdded:Wait(15) 
-    if not character then return end
-
-    local rootPart = character.PrimaryPart
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local character = nil
+    local rootPart = nil
+    local humanoid = nil
+    local mouse = nil
 
     -- Минимальная пауза между ударами (секунды). Динамически адаптируется.
     local ATTACK_COOLDOWN = 0.7  
@@ -32,7 +27,7 @@ local function Init()
     local NotificationsEnabled = true 
 
     -- Вспомогательные функции
-    local function n(text) 
+    local function n(text)
         if not NotificationsEnabled then return end
         pcall(function() 
             game.StarterGui:SetCore("SendNotification", {
@@ -42,7 +37,7 @@ local function Init()
 
     -- Поиск цели под курсором
     local function getTarget()
-        if not mouse.Target then return nil end
+        if not mouse or not mouse.Target then return nil end
         local char = mouse.Target:FindFirstAncestorWhichIsA("Model")
         if not char then return nil end
         local hum = char:FindFirstChildOfClass("Humanoid")
@@ -130,6 +125,81 @@ local function Init()
         end
     end
 
+    -- === ЦЕНТРАЛИЗОВАННЫЙ ОБРАБОТЧИК ВСЕХ КЛАВИШ ===
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+
+        -- Выбор цели клавишей F (ранее ПКМ)
+        if input.KeyCode == Enum.KeyCode.F then
+            Target = getTarget()
+            if Target then
+                lastKnownHealth = Target.Hum.Health
+                n("Target locked: " .. Target.Char.Name)
+            else
+                n("Target cleared.")
+            end
+        end
+
+        -- АТАКУЕМ ПО ЛКМ (осталось без изменений)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and not isProfiling then
+            if not character or not Target or Target.Hum.Health <= 0 then 
+                n("Select a target first (F key).")
+                return 
+            end
+
+            local now = tick()
+
+            -- Анти-спам с динамической адаптацией задержки
+            if now - LastAttackTime < ATTACK_COOLDOWN then 
+                n("Cooldown active ("..math.floor((ATTACK_COOLDOWN - (now - LastAttackTime)) * 10 + 0.5)/10.."s)")
+                -- Если система продолжает ругаться, увеличиваем паузу
+                ATTACK_COOLDOWN = math.min(ATTACK_COOLDOWN + 0.1, 1.5)
+            else
+                -- Сбрасываем задержку до дефолтной
+                ATTACK_COOLDOWN = 0.7
+            end
+
+            -- Основной алгоритм удара
+            if next(DamageLibrary) == nil then
+                n("Observing... Sending test packets.")
+                local allRemotes = collectWeapons()
+                for _, r in ipairs(allRemotes) do
+                    pcall(function() r:FireServer(Target.Name) end)
+                    task.wait(0.03) -- Небольшой интервал для избежания мгновенного баннера
+                end
+                return
+            end
+
+            -- Выбираем самое мощное оружие из библиотеки
+            local BestWeaponData = nil
+            for _, data in pairs(DamageLibrary) do
+                if not BestWeaponData or data.maxDamage > BestWeaponData.maxDamage then
+                    BestWeaponData = data
+                end
+            end
+
+            if BestWeaponData then
+                n("Firing best vector ("..BestWeaponData.remoteObj.Name..")")
+                pcall(function() BestWeaponData.remoteObj:FireServer(unpack(BestWeaponData.bestPayload)) end)
+                LastAttackTime = tick() -- Обновляем таймер
+            else
+                n("Error: No weapon selected.")
+            end
+        end
+
+        -- Управление режимом Песочницы (изменено с F9 на F1)
+        if input.KeyCode == Enum.KeyCode.F1 then
+            isProfiling = not isProfiling
+            n(isProfiling and "Sandbox mode ON" or "Sandbox mode OFF")
+        end
+
+        -- Отключение уведомлений (изменено с NUMPAD0 на F3)
+        if input.KeyCode == Enum.KeyCode.F3 then
+            NotificationsEnabled = not NotificationsEnabled
+            n(NotificationsEnabled and "Notifications enabled" or "Notifications disabled")
+        end
+    end)
+
     -- === ПАССИВНОЕ НАБЛЮДЕНИЕ ЗА ВСЕМИ СОБЫТИЯМИ В ИГРЕ ===
     -- Этот цикл работает всегда с момента запуска
     task.spawn(function()
@@ -179,7 +249,7 @@ local function Init()
                                 bestPayload = args,
                                 maxDamage = delta
                             }
-                            print("[LOG] Weapon Found:", r:GetFullName(), "| Dmg:", delta)
+                            print(" [LOG] Weapon Found:", r:GetFullName(), "| Dmg:", delta)
                         else
                             -- Иногда урон может быть отрицательным из-за регенерации
                             -- Мы игнорируем такие случаи
@@ -190,83 +260,6 @@ local function Init()
         end
     end)
 
-    -- === АВТОМАТИЧЕСКИЙ БОЙ ПО ЛКМ ===
-    -- Объединенный обработчик всех клавиш
-    UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-
-        -- Выбор цели ПКМ (для удобства)
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then
-            Target = getTarget()
-            if Target then
-                lastKnownHealth = Target.Hum.Health
-                n("Target locked: " .. Target.Char.Name)
-            else
-                n("Target cleared.")
-            end
-        end
-
-        -- АТАКУЕМ ПО ЛКМ
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and not isProfiling then
-            local now = tick()
-
-            -- Анти-спам с динамической адаптацией задержки
-            if now - LastAttackTime < ATTACK_COOLDOWN then 
-                n("Cooldown active ("..math.floor((ATTACK_COOLDOWN - (now - LastAttackTime)) * 10 + 0.5)/10.."s)")
-                -- Если система продолжает ругаться, увеличиваем паузу
-                ATTACK_COOLDOWN = math.min(ATTACK_COOLDOWN + 0.1, 1.5)
-            else
-                -- Сбрасываем задержку до дефолтной
-                ATTACK_COOLDOWN = 0.7
-            end
-
-            -- Основной алгоритм удара
-            if not Target or Target.Hum.Health <= 0 then 
-                n("Select a target first (RMB).")
-                return 
-            end
-
-            -- Если база знаний пуста (мы никого не видели дерущимся)
-            if next(DamageLibrary) == nil then
-                n("Observing... Sending test packets.")
-                local allRemotes = collectWeapons()
-                for _, r in ipairs(allRemotes) do
-                    pcall(function() r:FireServer(Target.Name) end)
-                    task.wait(0.03) -- Небольшой интервал для избежания мгновенного баннера
-                end
-                return
-            end
-
-            -- Выбираем самое мощное оружие из библиотеки
-            local BestWeaponData = nil
-            for _, data in pairs(DamageLibrary) do
-                if not BestWeaponData or data.maxDamage > BestWeaponData.maxDamage then
-                    BestWeaponData = data
-                end
-            end
-
-            if BestWeaponData then
-                n("Firing best vector ("..BestWeaponData.remoteObj.Name..")")
-                pcall(function() BestWeaponData.remoteObj:FireServer(unpack(BestWeaponData.bestPayload)) end)
-                LastAttackTime = tick() -- Обновляем таймер
-            else
-                n("Error: No weapon selected.")
-            end
-        end
-
-        -- Управление режимом Песочницы
-        if input.KeyCode == Enum.KeyCode.F9 then
-            isProfiling = not isProfiling
-            n(isProfiling and "Sandbox mode ON" or "Sandbox mode OFF")
-        end
-
-        -- Отключение уведомлений
-        if input.KeyCode == Enum.KeyCode.KeypadZero then
-            NotificationsEnabled = not NotificationsEnabled
-            n(NotificationsEnabled and "Notifications enabled" or "Notifications disabled")
-        end
-    end)
-
     -- === РЕЖИМ ПЕСОЧНИЦЫ (Sandbox Mode): Автоматический сбор информации ===
     -- Этот режим заставляет вашего персонажа бегать по карте и кликать мышью,
     -- чтобы найти хит-боксы и скрытые триггеры.
@@ -274,17 +267,21 @@ local function Init()
         while wait() do
             if not isProfiling then continue end
 
-            -- Перемещаемся по карте
-            if rootPart then
-                local newPos = Vector3.new(
-                    math.random(-workspace.Terrain.Size.X / 2, workspace.Terrain.Size.X / 2),
-                    10, -- Высота над землей
-                    math.random(-workspace.Terrain.Size.Z / 2, workspace.Terrain.Size.Z / 2)
-                )
-                rootPart.CFrame = CFrame.new(newPos)
-                task.wait(0.1)
-                humanoid.Jump = true -- Имитация активности
+            -- Ожидание загрузки персонажа
+            if not character or not rootPart then
+                wait(1)
+                continue
             end
+
+            -- Перемещаемся по карте
+            local newPos = Vector3.new(
+                math.random(-workspace.Terrain.Size.X / 2, workspace.Terrain.Size.X / 2),
+                10, -- Высота над землей
+                math.random(-workspace.Terrain.Size.Z / 2, workspace.Z / 2)
+            )
+            rootPart.CFrame = CFrame.new(newPos)
+            task.wait(0.1)
+            humanoid.Jump = true -- Имитация активности
 
             -- Случайно кликаем мышкой
             firetouchinterest(rootPart, mouse.Target, 0)
@@ -318,7 +315,22 @@ local function Init()
         end
     end)
 
-    n"[Profiler v3] Ready. [RMB]=Lock Target | [LMB]=Kill | [F9]=Sandbox Mode | [NUMPAD0]=Toggle Notifs")
+    -- === МЕТОД ОЖИДАНИЯ ЗАГРУЗКИ ПЕРСОНАЖА ===
+    -- Это гарантирует, что ни одна функция не будет вызвана раньше времени.
+    local function AwaitCharacter()
+        repeat
+            character = player.Character or player.CharacterAdded:Wait()
+            rootPart = character.PrimaryPart
+            humanoid = character:FindFirstChildOfClass("Humanoid")
+            mouse = player:GetMouse()
+            wait(1) -- Даем объектам стабилизироваться
+        until rootPart and humanoid and mouse
+
+        n"[Profiler v4] Character loaded. Ready to observe.")
+    end
+
+    -- Запускаем ожидание в корутине, чтобы не блокировать выполнение loadstring
+    task.spawn(AwaitCharacter)
 end
 
 pcall(Init)
