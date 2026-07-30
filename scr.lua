@@ -1,6 +1,8 @@
 -- ⚙️ Настройки скрипта
-local MOVEMENT_SPEED = 15      -- Скорость движения бота
 local MESSAGE_DURATION = 3     -- Время отображения сообщений (секунды)
+local MOVEMENT_SPEED = 16      -- Базовая скорость движения
+local ATTACK_RANGE = 8        -- Радиус ближнего боя
+local AVOIDANCE_DISTANCE = 3   -- Минимальное расстояние до стен
 
 -- 🛡️ Защита от повторного запуска
 if script.Parent then return end
@@ -28,14 +30,14 @@ local function debugLog(msg)
 end
 
 -- 🕸️ Создание визуальной подсказки (рамки вокруг игроков)
-local function createHighlight(targetCharacter)
+local function createHighlight(targetCharacter, color)
     if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
 
     local box = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
     box.Name = "Bot_Highlight"
     box.AlwaysOnTop = true
     box.ZIndex = 10
-    box.Color3 = Color3.fromRGB(0, 255, 0)   
+    box.Color3 = color   
     box.Transparency = 0.7                    
     box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
     box.Adornee = targetCharacter             
@@ -43,9 +45,10 @@ local function createHighlight(targetCharacter)
     return box
 end
 
--- 🗨️ Вывод информации о других игроках
-local function trackPlayers()
+-- 🗨️ Сбор информации о мире
+local function trackWorld()
     while wait(1) do
+        -- Анализируем игроков
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= player and plr.Character then
                 local char = plr.Character
@@ -53,7 +56,13 @@ local function trackPlayers()
                 
                 if hum and hum.Health > 0 then
                     -- Создаем/обновляем рамку
-                    createHighlight(char)
+                    local clr = Color3.fromRGB(0, 255, 0)
+                    if hum.Health < 50 then
+                        clr = Color3.fromRGB(255, 255, 0) -- Жёлтый цвет для раненых
+                    elseif hum.Health == 100 then
+                        clr = Color3.fromRGB(255, 0, 0) -- Красный цвет для самых опасных
+                    end
+                    createHighlight(char, clr)
                     
                     -- Логируем данные
                     local rootPos = char.HumanoidRootPart.Position
@@ -73,50 +82,80 @@ local function trackPlayers()
                 end
             end
         end
-    end
-end
 
--- 👟 Управление персонажем
-local function moveCharacter()
-    -- Получаем контроллер передвижения
-    local controller = player.Character:WaitForChild("Humanoid"):GetStateController(Enum.HumanoidStateType.Walking)
-
-    -- Ходим прямо вперед
-    -- controller:MoveTo(Vector3.new(player.Character.HumanoidRootPart.CFrame.LookVector * MOVEMENT_SPEED))
-
-    -- Или следуем за мышью (более интересный вариант):
-    repeat wait() until mouse.Target and mouse.Target.Parent
-    while wait() do
-        local target = mouse.Target
-        if target and target.Parent then
-            local char = target.Parent
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            
-            -- Если это живой игрок, идём к нему
-            if hum and hum.Health > 0 then
-                controller:MoveTo(mouse.Hit.p)
-            elseif mouse.Target.CanCollide then
-                -- Иначе идем просто к точке под курсором
-                controller:MoveTo(mouse.Hit.p)
+        -- Пример памяти: поиск аптечек (добавь их в свою карту как Part с названием Heal)
+        for _, part in ipairs(workspace:GetDescendants()) do
+            if part.Name == "Heal" and part.CanCollide then
+                -- Запоминаем позицию аптечки
+                debugLog(string.format("Найдена аптечка: %.1f, %.1f, %.1f", part.Position.X, part.Position.Y, part.Position.Z))
+                -- Здесь можно добавить логику поиска пути к ней при низком HP
             end
         end
     end
 end
 
--- 🎮 Назначаем реакцию на кнопки
-UserInputService.InputBegan:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.E then
-        -- Прыжок по нажатию E
-        player.Character.Humanoid.Jump = true
+-- 👟 Управление персонажем (ИИ)
+local function moveAI()
+    -- Получаем контроллер передвижения
+    local controller = player.Character:WaitForChild("Humanoid"):GetStateController(Enum.HumanoidStateType.Walking)
+
+    -- Основной цикл принятия решений
+    while wait(0.1) do
+        -- Шаг 1: Избегание столкновений со стенами
+        local raycastParams = RaycastParams.new()
+        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+        raycastParams.FilterDescendantsInstances = {player.Character}
         
-        -- Пример другого действия: подбросить себя вверх
-        -- player.Character.HumanoidRootPart.Velocity = Vector3.new(0, 80, 0)
+        local result = workspace:Raycast(player.Character.HumanoidRootPart.Position, 
+                                        player.Character.HumanoidRootPart.CFrame.LookVector * AVOIDANCE_DISTANCE, 
+                                        raycastParams)
+        
+        if result and result.Instance.CanCollide then
+            -- Стена впереди, идём вправо
+            controller:MoveTo(Vector3.new(result.Normal.X, 0, -result.Normal.Z).Unit * MOVEMENT_SPEED)
+        else
+            -- Шаг 2: Выбор цели
+            local bestTarget = nil
+            local closestDistance = math.huge
+
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= player and plr.Character then
+                    local char = plr.Character
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    
+                    if hum and hum.Health > 0 then
+                        local dist = (char.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude
+                        
+                        -- Приоритет: атаковать слабых или тех, кто ближе всего
+                        if hum.Health <= 50 or dist < closestDistance then
+                            bestTarget = char
+                            closestDistance = dist
+                        end
+                    end
+                end
+            end
+
+            -- Принятие решения
+            if bestTarget then
+                if closestDistance <= ATTACK_RANGE then
+                    -- Мы в зоне атаки, останавливаемся
+                    controller:MoveTo(player.Character.HumanoidRootPart.Position)
+                    -- Здесь можно добавить анимацию удара
+                else
+                    -- Идём к цели
+                    controller:MoveTo(bestTarget.HumanoidRootPart.Position)
+                end
+            else
+                -- Если целей нет, идём вперёд
+                controller:MoveTo(player.Character.HumanoidRootPart.CFrame.LookVector * MOVEMENT_SPEED)
+            end
+        end
     end
-end)
+end
 
 -- 💡 Инициализация при первом запуске loadstring
 showNotification("[🆘] Системное сообщение: Автономный режим активен!", Color3.fromRGB(255, 255, 255))
 debugLog("Сценарий начал работу!")
 
-trackPlayers()   -- Запускаем отслеживание игроков
-moveCharacter()  -- Запускаем управление персонажем
+trackWorld()   -- Запускаем отслеживание мира
+moveAI()       -- Запускаем искусственный интеллект
