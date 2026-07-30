@@ -1,11 +1,11 @@
--- Passive Observer Killer v4: Dynamic Profiler & Sandbox Mode
+-- Hitbox Replicator v1: Physical Damage Profiler
 local function Init()
-    local Players = game:GetService("Players")
+    local Players = game.GetService(game, "Players")
     local UserInputService = game.GetService(game, "UserInputService") -- Защита от nil
     local RunService = game:GetService("RunService")
     
     -- === НАСТРОЙКИ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
-    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()  -- Ждём игрока
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
     if not player then return end
 
     local character = nil
@@ -13,18 +13,12 @@ local function Init()
     local humanoid = nil
     local mouse = nil
 
-    -- Минимальная пауза между ударами (секунды). Динамически адаптируется.
-    local ATTACK_COOLDOWN = 0.7  
-    -- Таймстамп последней успешной атаки
-    local LastAttackTime = tick()   
+    -- База знаний: [ModelName] -> {Hitbox, RemoteObj, Payload}
+    local HitLibrary = {}
     -- Текущая цель игрока
     local Target = nil                
-    -- База знаний: [RemoteName] -> {remoteObj, bestPayload, maxDamage}
-    local DamageLibrary = {}          
     -- Флаг наблюдения за всеми событиями
-    local isProfiling = false        
-    -- Последнее известное здоровье цели
-    local lastKnownHealth = 0       
+    local isProfiling = true          -- Включаем авто-поиск сразу
     -- Отключает всплывающие уведомления
     local NotificationsEnabled = true 
 
@@ -48,75 +42,75 @@ local function Init()
     end
 
     -- Генерация тестовых пакетов данных
-    local function generateTestPackets(target)
+    local function generateTestPackets(hitbox)
         return {
-            target.Name,
-            target.Hum,
-            {Victim = target.Name, Dmg = math.huge},
-            {["player"] = player, ["enemy"] = target.Char},
+            hitbox.Parent.Name,
+            hitbox.Parent,
+            {Victim = hitbox.Parent.Name},
+            {["player"] = player, ["weapon"] = hitbox.Parent},
             "GodWeapon_Debug",
-            target.Name .. "_DEBUG"
+            hitbox.Parent.Name .. "_DEBUG"
         }
     end
 
-    -- Сбор всех потенциальных точек нанесения урона
-    local function collectWeapons()
-        local weapons = {}
+    -- Сбор всех потенциальных хитбоксов
+    local function collectHits()
+        local hits = {}
 
-        -- Ищем RemoteEvents во всех стандартных местах
-        for _, obj in pairs(ReplicatedStorage:GetDescendants()) do
-            if obj:IsA("RemoteEvent") then table.insert(weapons, obj) end
-        end
         for _, obj in pairs(workspace:GetDescendants()) do
-            if obj:IsA("RemoteEvent") then table.insert(weapons, obj) end
+            if obj:IsA("BasePart") and obj.Transparency >= 0.9 and not obj.CanCollide then
+                table.insert(hits, obj)
+            end
         end
 
-        -- Ищем вызовы событий внутри клиентских скриптов (LocalScripts).
-        -- Это критически важно! Многие игровые механики реализованы именно так.
-        for _, script in ipairs(game.Lighting:GetChildren()) do
-            if script:IsA("LocalScript") then
-                local src = script.Source
-                for _, remote in ipairs(weapons) do
-                    -- Проверяем, есть ли вызов этого события в скрипте
-                    if string.find(src, "%."..remote.Name..":FireServer%(", 1, true) then
-                        table.insert(weapons, remote)
+        -- Дополнительно проверяем оружие других игроков
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Character then
+                for _, tool in ipairs(plr.Character:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        for _, part in ipairs(tool:GetDescendants()) do
+                            if part:IsA("BasePart") and part.Transparency >= 0.9 and not part.CanCollide then
+                                table.insert(hits, part)
+                            end
+                        end
                     end
                 end
             end
         end
 
-        return weapons
+        return hits
     end
 
-    -- Профилирование одного конкретного RemoteEvent
-    local function profile(remoteData)
+    -- Профилирование одного конкретного хитбокса
+    local function profile(hitData)
         if not Target then return end
 
         local victimHum = Target.Hum
         local currentHealth = victimHum.Health
 
         -- Пробуем отправить лучший известный пакет данных
-        local payloads = #DamageLibrary[remoteData.Name] == 0 and generateTestPackets(Target) or {DamageLibrary[remoteData.Name].bestPayload}
+        local payloads = #HitLibrary[hitData.Part.Parent.Name] == 0 and generateTestPackets(hitData.Part) or {HitLibrary[hitData.Part.Parent.Name].Payload}
 
         for i, data in ipairs(payloads) do
             -- Отправляем пакет
-            pcall(function() remoteData.remoteObj:FireServer(data) end)
+            pcall(function() hitData.Remote:FireServer(data) end)
             
-            task.wait(0.15) -- Защита от анти-спама Roblox
+            task.wait(0.15) -- Защита от анти-спам систем игры
 
             -- Смотрим результат
             local delta = currentHealth - victimHum.Health
             if delta <= 0 then continue end
 
             -- Обновление базы знаний
-            local entry = DamageLibrary[remoteData.Name]
+            local entry = HitLibrary[hitData.Part.Parent.Name]
             if not entry or delta > entry.maxDamage then
-                DamageLibrary[remoteData.Name] = {
-                    remoteObj = remoteData.remoteObj,
-                    bestPayload = data,
+                HitLibrary[hitData.Part.Parent.Name] = {
+                    Hitbox = hitData.Part,
+                    Remote = hitData.Remote,
+                    Payload = data,
                     maxDamage = delta
                 }
-                print("[LOG] New Best Weapon:", remoteData.remoteObj:GetFullName(), "| Payload Type:", typeof(data))
+                print("[LOG] New Best Weapon:", hitData.Part.Parent.Name, "| Dmg:", delta)
             end
         end
     end
@@ -129,7 +123,6 @@ local function Init()
         if input.KeyCode == Enum.KeyCode.F then
             Target = getTarget()
             if Target then
-                lastKnownHealth = Target.Hum.Health
                 n("Target locked: " .. Target.Char.Name)
             else
                 n("Target cleared.")
@@ -143,40 +136,46 @@ local function Init()
                 return 
             end
 
-            local now = tick()
-
-            -- Анти-спам с динамической адаптацией задержки
-            if now - LastAttackTime < ATTACK_COOLDOWN then 
-                n("Cooldown active ("..math.floor((ATTACK_COOLDOWN - (now - LastAttackTime)) * 10 + 0.5)/10.."s)")
-                -- Если система продолжает ругаться, увеличиваем паузу
-                ATTACK_COOLDOWN = math.min(ATTACK_COOLDOWN + 0.1, 1.5)
-            else
-                -- Сбрасываем задержку до дефолтной
-                ATTACK_COOLDOWN = 0.7
-            end
-
             -- Основной алгоритм удара
-            if next(DamageLibrary) == nil then
+            if next(HitLibrary) == nil then
                 n("Observing... Sending test packets.")
-                local allRemotes = collectWeapons()
-                for _, r in ipairs(allRemotes) do
-                    pcall(function() r:FireServer(Target.Name) end)
-                    task.wait(0.03) -- Небольшой интервал для избежания мгновенного баннера
+                local allHits = collectHits()
+                for _, h in ipairs(allHits) do
+                    pcall(function() h.Touched:Fire(Target.Char.PrimaryPart) end) -- Имитация физического контакта
+                    task.wait(0.03)
                 end
                 return
             end
 
             -- Выбираем самое мощное оружие из библиотеки
             local BestWeaponData = nil
-            for _, data in pairs(DamageLibrary) do
+            for name, data in pairs(HitLibrary) do
                 if not BestWeaponData or data.maxDamage > BestWeaponData.maxDamage then
                     BestWeaponData = data
                 end
             end
 
             if BestWeaponData then
-                n("Firing best vector ("..BestWeaponData.remoteObj.Name..")")
-                pcall(function() BestWeaponData.remoteObj:FireServer(unpack(BestWeaponData.bestPayload)) end)
+                -- Создаём фантомную копию хитбокса
+                local phantom = Instance.new("Part", workspace)
+                phantom.Anchored = true
+                phantom.CanCollide = false
+                phantom.Size = Vector3.new(1, 1, 1)
+                phantom.CFrame = Target.Char.PrimaryPart.CFrame * CFrame.new(0, 0.8, 0) -- Над головой
+
+                -- Подключаем к нему ту же логику
+                phantom.Touched:Connect(function(targ)
+                    if targ == Target.Char.PrimaryPart then
+                        pcall(function() BestWeaponData.Remote:FireServer(BestWeaponData.Payload) end)
+                    end
+                end)
+
+                -- Имитируем контакт
+                firetouchinterest(phantom, Target.Char.PrimaryPart, 0)
+                wait(0.1)
+                firetouchinterest(phantom, Target.Char.PrimaryPart, 1)
+                phantom:Destroy()
+
                 LastAttackTime = tick() -- Обновляем таймер
             else
                 n("Error: No weapon selected.")
@@ -196,122 +195,68 @@ local function Init()
         end
     end)
 
-    -- === ПАССИВНОЕ НАБЛЮДЕНИЕ ЗА СОБЫТИЯМИ ===
+    -- === РЕЖИМ АВТО-ПОИСКА ХИТБОКСОВ ===
     task.spawn(function()
         while wait(1) do -- Обновляем список раз в секунду
-            local allRemotes = collectWeapons()
+            local allHits = collectHits()
 
-            -- Подписываемся на КАЖДОЕ событие в игре
-            for _, r in ipairs(allRemotes) do
-                -- Пропускаем уже подключенные
-                if rawget(DamageLibrary, r.Name) then continue end
+            -- Подписываемся на КАЖДЫЙ хитбокс в игре
+            for _, hit in ipairs(allHits) do
+                -- Пропускаем уже изученные
+                if rawget(HitLibrary, hit.Parent.Name) then continue end
 
-                r.OnClientEvent:Connect(function(arg1, arg2, arg3, arg4)
-                    -- Игнорируем собственные запросы
-                    if debug.info(2, "f") == Init then return end
-
-                    -- Собираем аргументы
-                    local args = {arg1, arg2, arg3, arg4}
-                    
-                    -- Ищем жертву среди аргументов
-                    local potentialVictim = nil
-                    for _, v in ipairs(args) do
-                        if typeof(v) == "string" then
-                            local plr = Players:FindFirstChild(v)
-                            if plr and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid") then
-                                potentialVictim = plr.Character
-                                break
-                            end
-                        elseif typeof(v) == "Instance" and v:IsA("Humanoid") then
-                            potentialVictim = v.Parent
+                -- Находим связанный с ним RemoteEvent
+                local remote = nil
+                local script = hit.Parent:FindFirstChildWhichIsA("LocalScript") or hit.Parent.Parent:FindFirstChildWhichIsA("LocalScript")
+                if script then
+                    local src = script.Source
+                    for _, obj in pairs(ReplicatedStorage:GetDescendants()) do
+                        if obj:IsA("RemoteEvent") and string.find(src, "%."..obj.Name..":FireServer%(", 1, true) then
+                            remote = obj
                             break
                         end
                     end
+                end
 
-                    -- Анализируем изменение здоровья
-                    if potentialVictim then
-                        local victimHum = potentialVictim:FindFirstChildOfClass("Humanoid")
-                        local healthBefore = victimHum.Health
-                        
-                        -- Ждем один кадр для получения точного результата
-                        RunService.RenderStepped:Wait()
-                        local delta = healthBefore - victimHum.Health
+                if remote then
+                    hit.Touched:Connect(function(targ)
+                        -- Игнорируем собственные запросы
+                        if debug.info(2, "f") == Init then return end
 
-                        if delta > 0 then
-                            -- Записали самый мощный способ использования этого эвента
-                            DamageLibrary[r.Name] = {
-                                remoteObj = r,
-                                bestPayload = args,
-                                maxDamage = delta
-                            }
-                            print("Weapon Found:", r:GetFullName(), "| Dmg:", delta)
+                        local potentialVictim = nil
+                        if typeof(targ) == "Instance" and targ.Parent then
+                            local plr = Players:GetPlayerFromCharacter(targ.Parent)
+                            if plr and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid") then
+                                potentialVictim = plr.Character
+                            end
                         end
-                    end
-                end)
+
+                        if potentialVictim then
+                            local victimHum = potentialVictim:FindFirstChildOfClass("Humanoid")
+                            local healthBefore = victimHum.Health
+                            
+                            -- Ждём один кадр для получения точного результата
+                            RunService.RenderStepped:Wait()
+                            local delta = healthBefore - victimHum.Health
+
+                            if delta > 0 then
+                                -- Записали самый мощный способ использования этого хитбокса
+                                HitLibrary[hit.Parent.Name] = {
+                                    Hitbox = hit,
+                                    Remote = remote,
+                                    Payload = {},
+                                    maxDamage = delta
+                                }
+                                print("Found Hitbox:", hit.Parent.Name, "| Linked to:", remote.Name, "| Dmg:", delta)
+                            end
+                        end
+                    end)
+                end
             end
-        end
-    end)
-
-    -- === РЕЖИМ ПЕСОЧНИЦЫ (Sandbox Mode): Автоматический сбор информации ===
-    task.spawn(function()
-        while wait() do
-            if not isProfiling then continue end
-
-            -- Ожидание загрузки персонажа
-            repeat
-                character = player.Character or player.CharacterAdded:Wait()
-                rootPart = character.PrimaryPart
-                humanoid = character:FindFirstChildOfClass("Humanoid")
-                mouse = player:GetMouse()
-                wait(1) -- Даем объектам стабилизироваться
-            until rootPart and humanoid and mouse
-
-            -- Перемещаемся по карте
-            local newPos = Vector3.new(
-                math.random(-workspace.Terrain.Size.X / 2, workspace.Terrain.Size.X / 2),
-                10, -- Высота над землей
-                math.random(-workspace.Terrain.Size.Z / 2, workspace.Terrain.Size.Z / 2)
-            )
-            rootPart.CFrame = CFrame.new(newPos)
-            task.wait(0.1)
-            humanoid.Jump = true -- Имитация активности
-
-            -- Случайные клики мышкой только если у нас есть цель
-            if Target then
-                firetouchinterest(rootPart, Target.Char.PrimaryPart, 0)
-                task.wait(0.1)
-                firetouchinterest(rootPart, Target.Char.PrimaryPart, 1)
-            end
-
-            -- Тестируем все найденные Remotes
-            local remotes = collectWeapons()
-            for _, r in ipairs(remotes) do
-                profile({remoteObj = r})
-            end
-
-            -- Пауза перед следующим кругом сбора данных
-            task.wait(5)
-        end
-    end)
-
-    -- === ВИЗУАЛИЗАЦИЯ ЦЕЛИ ===
-    local hl = nil
-    RunService.RenderStepped:Connect(function()
-        if Target and Target.Hum.Health > 0 then
-            if not hl then
-                hl = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
-                hl.AlwaysOnTop = true; hl.ZIndex = 10; hl.Transparency = 0.7;
-            end
-            hl.Adornee = Target.Char
-            hl.Size = Target.Char:GetExtentsSize() + Vector3.new(0.2, 0.2, 0.2)
-            hl.Color3 = Color3.fromRGB(0, 255, 0)
-        elseif hl then
-            hl:Destroy(); hl = nil
         end
     end)
 
     -- === МЕТОД ЗАГРУЗКИ ПЕРСОНАЖА ===
-    -- Этот метод гарантирует, что ни одна функция не будет вызвана раньше времени.
     local function AwaitCharacter()
         repeat
             character = player.Character or player.CharacterAdded:Wait()
@@ -321,10 +266,10 @@ local function Init()
             wait(1) -- Даем объектам стабилизироваться
         until rootPart and humanoid and mouse
 
-        n("Profiler v4 loaded. Use F to select target, LMB to attack.")
+        nProfiler v4 loaded. Use F to select target, LMB to attack.)
     end
 
-    -- Запускаем ожидание в корутине, чтобы не блокировать выполнение loadstring
+    -- Запускаем ожидание в корутине
     task.spawn(AwaitCharacter)
 end
 
