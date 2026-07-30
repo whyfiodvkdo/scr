@@ -1,32 +1,41 @@
--- Passive Observer Killer.lua
+-- Passive Observer Killer v4: Hybrid Profiler & Hitbox Replicator
 local function Init()
     local Players = game.GetService(game, "Players")
-    local ReplicatedStorage = game.GetService(game, "ReplicatedStorage")
-    local UserInputService = game.GetService(game, "UserInputService")
+    local UserInputService = game.GetService(game, "UserInputService") -- Защита от nil
     local RunService = game:GetService("RunService")
     
-    local player = Players.LocalPlayer
+    -- === НАСТРОЙКИ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()  -- Ждём игрока
+    if not player then return end
+
+    -- ⚙️⚙️⚙️ ВАЖНОЕ ДОБАВЛЕНИЕ ДЛЯ ЗАГРУЗКИ ⚙️⚙️⚙️
+    -- Ожидание полной загрузки персонажа
+    repeat wait(1) until player.Character and player.Character.PrimaryPart
+    local character = player.Character
+    local rootPart = character.PrimaryPart
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
     local mouse = player:GetMouse()
-    local character = player.Character or player.CharacterAdded:Wait()
 
-    -- === БАЗА ДАННЫХ НАБЛЮДЕНИЙ ===
-    -- Здесь хранятся все найденные способы нанесения урона в формате:
-    -- [RemoteName] = {remoteObj = ..., bestPayload = ..., maxDamage = ...}
-    local DamageLibrary = {}
-
+    -- Минимальная пауза между ударами (секунды). Динамически адаптируется.
+    local ATTACK_COOLDOWN = 0.7  
+    -- Таймстамп последней успешной атаки
+    local LastAttackTime = tick()   
     -- Текущая цель игрока
-    local Target = nil
+    local Target = nil                
+    -- База знаний: [RemoteName] -> {remoteObj, bestPayload, maxDamage}
+    local DamageLibrary = {}          
+    -- Флаг наблюдения за всеми событиями
+    local isProfiling = true          -- Включаем авто-поиск сразу
+    -- Отключает всплывающие уведомления
+    local NotificationsEnabled = true 
 
-    local function n(text) pcall(function() game.StarterGui:SetCore("SendNotification", {Title="[Observer]", Text=text, Duration=2}) end) end
-
-    -- Генерация тестовых пакетов для "пробива" защиты (когда библиотека пуста)
-    local function generateTestPackets(target)
-        return {
-            target.Name,
-            target:FindFirstChildOfClass("Humanoid"),
-            {Victim = target.Name, Dmg = 999},
-            {Target = target, Value = math.huge}
-        }
+    -- Вспомогательные функции
+    local function n(text)
+        if not NotificationsEnabled then return end
+        pcall(function() 
+            game.StarterGui:SetCore("SendNotification", {
+                Title = "[Profiler]", Text = text, Duration = 2}) 
+        end) 
     end
 
     -- Поиск цели под курсором
@@ -39,7 +48,19 @@ local function Init()
         return nil
     end
 
-    -- Сбор всех RemoteEvent в игре
+    -- Генерация тестовых пакетов данных
+    local function generateTestPackets(target)
+        return {
+            target.Name,
+            target.Hum,
+            {Victim = target.Name, Dmg = math.huge},
+            {["player"] = player, ["enemy"] = target.Char},
+            "GodWeapon_Debug",
+            target.Name .. "_DEBUG"
+        }
+    end
+
+    -- Сбор всех потенциальных точек нанесения урона
     local function findAllRemotes()
         local remotes = {}
         for _, obj in pairs(ReplicatedStorage:GetDescendants()) do
@@ -51,9 +72,9 @@ local function Init()
         return remotes
     end
 
-    -- ⚙️⚙️⚙️🔧🔧🔧 МОИ ДОБАВКИ 🔧🔧⚙️⚙️⚙️
+    -- ⚙️⚙️⚙️ МОИ ДОБАВКИ: ПОИСК ХИТБОКСОВ ⚙️⚙️⚙️
 
-    -- Сбор всех потенциальных физических триггеров (хитов)
+    -- Сбор всех физических триггеров (хитбоксов)
     local function collectHits()
         local hits = {}
         
@@ -85,7 +106,7 @@ local function Init()
         return hits
     end
 
-    -- Профилирование одного конкретного RemoteEvent + Hitbox
+    -- Профилирование одного RemoteEvent + связанного хита
     local function profile(remoteData)
         if not Target then return end
 
@@ -98,34 +119,35 @@ local function Init()
         for i, data in ipairs(payloads) do
             pcall(function() remoteData.remoteObj:FireServer(data) end)
             
-            task.wait(0.15) -- Защита от анти-спам систем игры
+            task.wait(0.15) -- Защита от анти-спама Roblox
 
             -- Смотрим результат
             local delta = currentHealth - victimHum.Health
             if delta <= 0 then continue end
 
             -- Обновление базы знаний
-            DamageLibrary[remoteData.Name] = {
-                remoteObj = remoteData.remoteObj,
-                bestPayload = data,
-                maxDamage = delta,
-                hitbox = remoteData.Part -- <--- Запоминаем связанный хит
-            }
-
-            print("New Best Weapon:", remoteData.remoteObj.Name, "| Payload Type:", typeof(data))
+            local entry = DamageLibrary[remoteData.Name]
+            if not entry or delta > entry.maxDamage then
+                DamageLibrary[remoteData.Name] = {
+                    remoteObj = remoteData.remoteObj,
+                    bestPayload = data,
+                    maxDamage = delta,
+                    hitbox = remoteData.Part -- Запоминаем связанный хит
+                }
+                print("New Best Weapon:", remoteData.remoteObj.Name, "| Payload Type:", typeof(data))
+            end
         end
     end
 
-    -- ⚙️⚙️⚙️🔧🔧🔧 КОНЕЦ МОИХ ДОБАВОК 🔧🔧⚙️⚙️⚙️
+    -- ⚙️⚙️⚙️ КОНЕЦ МОИХ ДОБАВОК ⚙️⚙️⚙️
 
-    -- === 1. ПАССИВНОЕ НАБЛЮДЕНИЕ ЗА СЕРВЕРОМ ===
-    -- Этот цикл работает всегда с самого запуска
+    -- === ПАССИВНОЕ НАБЛЮДЕНИЕ ЗА СОБЫТИЯМИ ===
     task.spawn(function()
         while true do
             local allRemotes = findAllRemotes()
             local allHits = collectHits() -- <--- Добавил поиск хитбоксов
 
-            -- Вешаем слушателя на КАЖДЫЙ эвент
+            -- Подписываемся на КАЖДЫЙ эвент
             for _, remote in ipairs(allRemotes) do
                 -- Проверяем, не подключали ли мы уже этот эвент ранее
                 if not rawget(DamageLibrary, remote.Name) then
@@ -185,7 +207,7 @@ local function Init()
                                                 -- Нашли более мощную версию использования этого же эвента
                                                 DamageLibrary[remote.Name].bestPayload = args
                                                 DamageLibrary[remote.Name].maxDamage = delta
-                                                DamageLibrary[remote.Name].hitbox = hit.Part -- <--- Обновляем хит
+                                                DamageLibrary[remoteName].hitbox = hit.Part -- <--- Обновляем хит
                                                 print("Upgraded Weapon:", remote:GetFullName(), "New Dmg:", delta)
                                             end
                                         end
@@ -201,7 +223,7 @@ local function Init()
         end
     end)
 
-    -- === 2. РУЧНОЙ КОНТРОЛЬ (ЛКМ) ===
+    -- === РУЧНОЙ КОНТРОЛЬ (ЛКМ) ===
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
 
@@ -250,7 +272,7 @@ local function Init()
             if BestWeaponData then
                 n("Firing best vector ("..BestWeaponData.remoteObj.Name..")")
 
-                -- === НОВАЯ ЧАСТЬ: Создание фантомного хита ===
+                -- ⚙️⚙️⚙️ НОВАЯ ЧАСТЬ: Создание фантомного хита ⚙️⚙️⚙️
                 if BestWeaponData.hitbox then
                     -- Создаём временный объект в той же форме
                     local phantom = Instance.new(BestWeaponData.hitbox.ClassName, workspace)
@@ -258,9 +280,9 @@ local function Init()
                     phantom.CanCollide = false
                     phantom.Material = Enum.Material.Neon -- Для красоты можно сделать видимым
                     phantom.Color = Color3.fromRGB(255, 0, 0)
-                    phantom.Transparency = 0.7
+                    phantom.Transparency = 0.6
                     phantom.Size = BestWeaponData.hitbox.Size * Vector3.new(1, 1, 1.5) -- Немного больше для надёжности
-                    phantom.CFrame = Target.Char.PrimaryPart.CFrame * CFrame.new(0, 0.6, 0) -- Над головой цели
+                    phantom.CFrame = Target.Char.PrimaryPart.CFrame * CFrame.new(0, 0.8, 0) -- Над головой цели
 
                     -- Отправка пакета одновременно с физическим контактом
                     pcall(function() BestWeaponData.remoteObj:FireServer(unpack(BestWeaponData.bestPayload)) end)
