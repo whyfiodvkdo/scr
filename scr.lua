@@ -4,8 +4,6 @@ local MOVEMENT_SPEED = 16      -- Базовая скорость движени
 local ATTACK_RANGE = 8        -- Радиус ближнего боя
 local AVOIDANCE_DISTANCE = 4   -- Минимальное расстояние до стен
 
--- 🛡️ Защита от повторного запуска
-if script.Parent then return end
 
 -- 🖥️ Подключение к сервисам Roblox
 local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
