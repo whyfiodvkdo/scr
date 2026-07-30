@@ -1,226 +1,232 @@
--- Health Manager (исправленный)
+-- Tool Grabber v0.9: Find and equip all tools in the game
 local function Init()
-    local Players = game:GetService("Players")
-    local RunService = game:GetService("RunService")
-    local StarterGui = game:GetService("StarterGui")
+    local Players = game.GetService("Players")
+    local ReplicatedStorage = game.GetService("ReplicatedStorage")
+    local UserInputService = game.GetService("UserInputService")
 
-    -- Настройки по умолчанию (можно менять через GUI)
-    local Settings = {
-        MaxHealth = 500,
-        MinHealthThreshold = 100,
-        RegenerationSpeed = 200, -- HP per second
-        ActiveMode = "Shield", -- "Shield" или "Regen"
-    }
+    -- ⚙️ Настройки
+    local SEARCH_DELAY = 2       -- Задержка перед повторным поиском (сек)
+    local TOOL_TIMEOUT = 30     -- Сколько секунд держать тул в руке после выбора (или пока не выберешь другой)
+
+    -- Инициализация игрока
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait() 
+    if not player then return end
+
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then notify("Character not found!"); return end
 
     -- Функция уведомления
     local function notify(text)
         pcall(function()
-            StarterGui:SetCore("SendNotification", {
-                Title = "Health Manager",
+            game.StarterGui:SetCore("SendNotification", {
+                Title = "Tool Grabber",
                 Text = tostring(text),
-                Duration = 3,
-            })
+                Duration = 3})
         end)
-        print("[HealthManager] " .. tostring(text))
+        print("" .. tostring(text))
     end
 
-    -- Получаем игрока
-    local player = Players.LocalPlayer
-    if not player then
-        player = Players.PlayerAdded:Wait()
-    end
-    if not player then
-        warn("Player не найден.")
-        return
-    end
-
-    local playerGui = player:WaitForChild("PlayerGui")
-
-    -- Переменные персонажа/хуманоид
-    local char = player.Character or player.CharacterAdded:Wait()
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then
-        notify("Humanoid не найден в персонаже.")
-        -- продолжим, т.к. CharacterAdded обработчик обновит hum позже
-    end
-
-    -- Обновляем hum при респаунe
-    player.CharacterAdded:Connect(function(c)
-        char = c
-        hum = char:WaitForChild("Humanoid")
-        notify("Character загружен.")
-    end)
-
-    -- Создаём GUI (если уже есть — пересоздаём)
-    local existing = playerGui:FindFirstChild("HealthManager")
-    if existing then
-        existing:Destroy()
-    end
-
+    -- ⚙️ Создание GUI
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "HealthManager"
-    ScreenGui.ResetOnSpawn = false
-    ScreenGui.Parent = playerGui
+    ScreenGui.Name = "ToolGrabber"
+    ScreenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
 
     local MainFrame = Instance.new("Frame")
-    MainFrame.Name = "MainFrame"
-    MainFrame.Size = UDim2.new(0, 360, 0, 220)
-    MainFrame.Position = UDim2.new(0.5, -180, 0.5, -110)
+    MainFrame.Size = UDim2.new(0, 450, 0, 600)
+    MainFrame.Position = UDim2.new(0.5, -225, 0.5, -300) -- Центр экрана
     MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     MainFrame.BorderSizePixel = 0
+    MainFrame.Visible = false
     MainFrame.Parent = ScreenGui
 
     -- Заголовок
     local LabelTitle = Instance.new("TextLabel")
-    LabelTitle.Size = UDim2.new(1, 0, 0, 28)
-    LabelTitle.Position = UDim2.new(0, 0, 0, 0)
-    LabelTitle.BackgroundTransparency = 1
+    LabelTitle.Text = "Tool Grabber v0.9"
     LabelTitle.Font = Enum.Font.SourceSansBold
-    LabelTitle.TextSize = 18
     LabelTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    LabelTitle.Text = "Health Manager v1.0"
+    LabelTitle.BackgroundTransparency = 1
+    LabelTitle.Size = UDim2.new(1, 0, 0, 30)
+    LabelTitle.Position = UDim2.new(0, 0, 0, 0)
     LabelTitle.Parent = MainFrame
 
-    -- Mode toggle button
-    local ModeButton = Instance.new("TextButton")
-    ModeButton.Size = UDim2.new(0, 140, 0, 28)
-    ModeButton.Position = UDim2.new(0, 10, 0, 36)
-    ModeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    ModeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    ModeButton.Font = Enum.Font.SourceSans
-    ModeButton.TextSize = 16
-    ModeButton.Text = "Mode: " .. Settings.ActiveMode
-    ModeButton.Parent = MainFrame
+    -- Поисковая строка
+    local SearchBox = Instance.new("SearchBox")
+    SearchBox.PlaceholderText = "Filter by name..."
+    SearchBox.Position = UDim2.new(0, 10, 0, 40)
+    SearchBox.Size = UDim2.new(0, 430, 0, 30)
+    SearchBox.Parent = MainFrame
 
-    ModeButton.MouseButton1Click:Connect(function()
-        if Settings.ActiveMode == "Shield" then
-            Settings.ActiveMode = "Regen"
-        else
-            Settings.ActiveMode = "Shield"
-        end
-        ModeButton.Text = "Mode: " .. Settings.ActiveMode
-        notify("Active mode set to " .. Settings.ActiveMode)
-    end)
+    -- Список инструментов
+    local ListTools = Instance.new("ScrollingFrame")
+    ListTools.ScrollBarThickness = 8
+    ListTools.CanvasSize = UDim2.new(0, 0, 0, 0) -- Будет автоматически расти
+    ListTools.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    ListTools.Position = UDim2.new(0, 10, 0, 80)
+    ListTools.Size = UDim2.new(0, 430, 0, 470)
+    ListTools.Parent = MainFrame
 
-    -- helper: create label + textbox + apply button
-    local function createSettingRow(y, labelText, initialValue, onApply)
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(0, 120, 0, 24)
-        lbl.Position = UDim2.new(0, 10, 0, y)
-        lbl.BackgroundTransparency = 1
-        lbl.Font = Enum.Font.SourceSans
-        lbl.TextSize = 14
-        lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
-        lbl.Text = labelText
-        lbl.Parent = MainFrame
+    -- Кнопка обновления списка
+    local BtnRefresh = Instance.new("TextButton")
+    BtnRefresh.Text = "🔄 Refresh Tools"
+    BtnRefresh.AutoButtonColor = true
+    BtnRefresh.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    BtnRefresh.Position = UDim2.new(0, 10, 0, 560)
+    BtnRefresh.Size = UDim2.new(0, 120, 0, 30)
+    BtnRefresh.Parent = MainFrame
 
-        local txt = Instance.new("TextBox")
-        txt.Size = UDim2.new(0, 150, 0, 24)
-        txt.Position = UDim2.new(0, 135, 0, y)
-        txt.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-        txt.TextColor3 = Color3.fromRGB(255, 255, 255)
-        txt.Font = Enum.Font.SourceSans
-        txt.TextSize = 14
-        txt.Text = tostring(initialValue)
-        txt.ClearTextOnFocus = false
-        txt.Parent = MainFrame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 70, 0, 24)
-        btn.Position = UDim2.new(0, 295, 0, y)
-        btn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 14
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.Text = "Apply"
-        btn.Parent = MainFrame
-
-        btn.MouseButton1Click:Connect(function()
-            local val = tonumber(txt.Text)
-            if not val then
-                notify("Некорректное значение: " .. tostring(txt.Text))
-                return
-            end
-            onApply(val, txt)
-        end)
-        return txt, btn, lbl
-    end
-
-    -- Max Health
-    local maxTxt = createSettingRow(70, "Max Health:", Settings.MaxHealth, function(val)
-        if val < 1 then val = 1 end
-        Settings.MaxHealth = val
-        if hum then
-            hum.MaxHealth = val
-            hum.Health = math.min(hum.Health, hum.MaxHealth)
-        end
-        notify(string.format("Max Health set to %d.", val))
-    end)
-
-    -- Min threshold (shield)
-    local minTxt = createSettingRow(106, "Shield Threshold:", Settings.MinHealthThreshold, function(val)
-        if val < 0 then val = 0 end
-        if val > Settings.MaxHealth then val = Settings.MaxHealth end
-        Settings.MinHealthThreshold = val
-        notify(string.format("Shield threshold set to %d.", val))
-    end)
-
-    -- Regen speed
-    local regenTxt = createSettingRow(142, "Regen Speed (HP/sec):", Settings.RegenerationSpeed, function(val)
-        if val < 0 then val = 0 end
-        Settings.RegenerationSpeed = val
-        notify(string.format("Regen speed set to %d HP/sec.", val))
-    end)
-
-    -- Close button
-    local CloseBtn = Instance.new("TextButton")
-    CloseBtn.Size = UDim2.new(0, 60, 0, 22)
-    CloseBtn.Position = UDim2.new(1, -70, 0, 6)
-    CloseBtn.AnchorPoint = Vector2.new(0, 0)
-    CloseBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 30)
-    CloseBtn.Font = Enum.Font.SourceSansBold
-    CloseBtn.TextSize = 14
-    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    CloseBtn.Text = "Close"
-    CloseBtn.Parent = MainFrame
-    CloseBtn.MouseButton1Click:Connect(function()
-        ScreenGui:Destroy()
-    end)
-
-    -- Главная логика: использовать Heartbeat для плавной регенерации
-    do
-        local lastDt = 0
-        RunService.Heartbeat:Connect(function(dt)
-            lastDt = dt
-            if not hum then return end
-
-            -- Устанавливаем максимум здоровья персонажа
-            if hum.MaxHealth ~= Settings.MaxHealth then
-                hum.MaxHealth = Settings.MaxHealth
-            end
-
-            if Settings.ActiveMode == "Shield" then
-                -- Мгновенное восстановление при падении ниже порога
-                if hum.Health < Settings.MinHealthThreshold then
-                    hum.Health = math.min(Settings.MaxHealth, Settings.MaxHealth)
-                end
-            elseif Settings.ActiveMode == "Regen" then
-                -- Плавная регенерация: прирост = speed * dt
-                if hum.Health < hum.MaxHealth then
-                    local newHealth = math.min(hum.MaxHealth, hum.Health + Settings.RegenerationSpeed * dt)
-                    hum.Health = newHealth
-                end
+    -- Переключатель видимости
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == Enum.KeyCode.F then
+            MainFrame.Visible = not MainFrame.Visible
+            if MainFrame.Visible then
+                notify("Tool Grabber opened.")
             else
-                warn("Unknown active mode:", Settings.ActiveMode)
+                notify("Tool Grabber closed.")
             end
-        end)
+        end
+    end)
+
+    -- ⚙️ Логика работы
+    local EquippedTool = nil
+
+    -- Вспомогательная функция: найти оригинальную модель оружия
+    local function GetOriginalModel(toolInstance)
+        -- Сначала ищем внутри самой модели
+        for _, child in ipairs(toolInstance:GetChildren()) do
+            if child.ClassName == "Model" then
+                return child
+            end
+        end
+
+        -- Затем проверяем стандартные папки
+        local toolName = toolInstance.Name:lower()
+        local possibleFolders = {workspace, ReplicatedStorage}
+        for _, folder in pairs(possibleFolders) do
+            for _, obj in ipairs(folder:GetDescendants()) do
+                if obj.ClassName == "Model" and obj.Name:lower():find(toolName) then
+                    return obj
+                end
+            end
+        end
+
+        -- Если ничего не нашли, создаём простую копию
+        warn(string.format("No original model found for %s. Creating a simple copy.", toolName))
+        local newModel = Instance.new("Model")
+        newModel.PrimaryPart = toolInstance.Handle:Clone()
+        newModel.PrimaryPart.CanCollide = false
+        newModel.PrimaryPart.Anchored = false
+        newModel.PrimaryPart.Transparency = 0.5
+        newModel.Parent = workspace
+        return newModel
     end
 
-    notify("Health Manager loaded. Use the GUI to configure settings.")
+    -- Обработчик кликов на списке
+    ListTools.ChildAdded:Connect(function(btn)
+        btn.MouseButton1Click:Connect(function()
+            -- Удаляем старый тул
+            if EquippedTool then
+                EquippedTool.Parent = nil
+                task.wait(TOOL_TIMEOUT) -- Ждём немного, чтобы сервер успел обработать удаление
+            end
+
+            -- Получаем новый тул
+            local toolInst = script.ToolCache[btn.Text]
+            if not toolInst then return end
+
+            -- Создаем модель (оригинальную или копию)
+            local model = GetOriginalModel(toolInst)
+            model.Parent = workspace
+
+            -- Добавляем тул игроку
+            local newTool = toolInst:Clone()
+            newTool.Parent = player.Backpack
+            EquippedTool = newTool
+
+            -- Сразу берём в руки
+            wait(0.1) -- Даем время Backpack обработаться
+            hum:EquipTool(newTool)
+
+            notify(string.format("Equipped: %s", btn.Text))
+        end)
+    end)
+
+    -- Обновление списка инструментов
+    local function UpdateList(filterStr)
+        filterStr = (filterStr or ""):lower()
+        ListTools.CanvasSize = UDim2.new(0, 0, 0, 0)
+        
+        -- Очищаем текущий список кнопок
+        for _, child in ipairs(ListTools:GetChildren()) do
+            if child.ClassName == "TextButton" then
+                child:Destroy()
+            end
+        end
+
+        -- Перебираем кэш найденных инструментов
+        local yPos = 0
+        for toolName, _ in pairs(script.ToolCache) do
+            if string.find(toolName:lower(), filterStr) then
+                local btn = Instance.new("TextButton")
+                btn.Text = toolName
+                btn.AutoButtonColor = true
+                btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+                btn.Position = UDim2.new(0, 0, 0, yPos)
+                btn.Size = UDim2.new(1, 0, 0, 30)
+                btn.Parent = ListTools
+
+                yPos = yPos + 30
+                ListTools.CanvasSize = UDim2.new(0, 0, 0, yPos)
+            end
+        end
+    end
+
+    -- Первоначальный поиск инструментов
+    local function ScanGame()
+        script.ToolCache = {}
+
+        -- Стандартные места поиска
+        local searchContainers = {workspace, ReplicatedStorage}
+        for _, container in ipairs(searchContainers) do
+            for _, obj in ipairs(container:GetDescendants()) do
+                if obj.ClassName == "Tool" then
+                    script.ToolCache[obj.Name] = obj
+                end
+            end
+        end
+
+        -- Внутри моделей других игроков (оружие)
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= player and plr.Character then
+                for _, tool in ipairs(plr.Character:GetChildren()) do
+                    if tool.ClassName == "Tool" then
+                        script.ToolCache[tool.Name] = tool
+                    end
+                end
+            end
+        end
+
+        -- Обновляем список в GUI
+        UpdateList(SearchBox.Text)
+        notify(string.format("Found %d unique tools!", #script.ToolCache))
+    end
+
+    -- Подключаем события
+    BtnRefresh.MouseButton1Click:Connect(ScanGame)
+    SearchBox.Changed:Connect(function(prop)
+        if prop == "Text" then
+            UpdateList(SearchBox.Text)
+        end
+    end)
+
+    -- Запускаем первый поиск при загрузке
+    ScanGame()
+    
+    -- Повторный поиск каждые N секунд (на случай появления новых предметов)
+    while wait(SEARCH_DELAY) do
+        ScanGame()
+    end
 end
 
--- Безопасный запуск
-local ok, err = pcall(Init)
-if not ok then
-    warn("Health Manager failed to start: ", err)
-end
+pcall(Init)
