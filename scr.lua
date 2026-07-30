@@ -1,60 +1,66 @@
-local DAMAGE_MULTIPLIER = 9999 -- Умножитель урона (если есть)
-local HITBOX_SCALE = Vector3.new(5000, 5000, 5000) -- Огромный хитбокс
-local ATTACK_SPEED = 0      -- Мгновенная атака
-
 local Players = game.Players
 local player = Players.LocalPlayer or Players.LocalPlayer
+
+-- ✏️ Функция вывода структуры инструмента
+local function printToolStructure(tool)
+    -- 1. Выводим все числовые свойства
+    for propName, value in pairs(tool:GetProperties()) do
+        if type(value) == 'number' then
+            debugLog(string.format("[DEBUG] Свойство %s = %.0f", propName, value))
+        end
+    end
+
+    -- 2. Выводим иерархию объектов внутри инструмента
+    local indent = ""
+    local function recursivePrint(obj, level)
+        indent = string.rep(" ", level * 4)
+        
+        -- Проверяем тип объекта
+        if obj.ClassName == "LocalScript" then
+            debugLog(indent .. "[SCRIPT]: " .. obj.Name)
+            
+            -- Ищем функции атак внутри скрипта через метатаблицу
+            for k, v in pairs(getmetatable(obj)) do
+                if type(v) == 'function' and 
+                   (string.find(k, "Button") or string.find(k, "Attack")) then
+                    debugLog(indent .. "  -> Обнаружена функция: " .. k)
+                end
+            end
+        elseif obj.ClassName == "ProximityPrompt" then
+            debugLog(indent .. "[PROMPT]: " .. obj.Name)
+        else
+            debugLog(indent .. "[OBJ]: " .. obj.Name .. " (" .. obj.ClassName .. ")")
+        end
+
+        -- Рекурсивно проходим по всем детям
+        for _, child in ipairs(obj:GetChildren()) do
+            recursivePrint(child, level + 1)
+        end
+    end
+
+    recursivePrint(tool, 0)
+end
 
 coroutine.wrap(function()
     while true do
         local activeTool = nil
-        
-        if not player.Character then wait() continue end
 
-        for _, obj in ipairs(player.Character:GetChildren()) do
-            if obj.ClassName == "Tool" and obj.Parent == player.Character then
-                activeTool = obj
+        if not player.Character then wait(0.5) continue end
+
+        for _, tool in ipairs(player.Character:GetChildren()) do
+            if tool.ClassName == "Tool" and tool.Parent == player.Character then
+                activeTool = tool
                 break
             end
         end
 
         if activeTool then
-            -- ✅ Увеличиваем хитбокс
-            local handle = activeTool:FindFirstChildWhichIsA("BasePart")
-            if handle then
-                handle.CanCollide = false
-                handle.Size = HITBOX_SCALE
-                
-                -- Если есть стандартный параметр Damage — увеличиваем его
-                if activeTool.Damage then
-                    activeTool.Damage = activeTool.Damage * DAMAGE_MULTIPLIER
-                end
-            else
-                warn("[WARNING] Инструмент без физического тела!")
-            end
-
-            -- ✅ Имитируем нажатие кнопок атаки
-            local prompt = activeTool:FindFirstChildOfClass("ProximityPrompt") 
-            if prompt then fireproximyprompt(prompt) end
-
-            -- ✅ Запускаем все скрипты атаки
-            for _, script in pairs(activeTool:GetChildren()) do
-                if script.ClassName == "LocalScript" then
-                    pcall(function()
-                        -- Имитация стандартных событий мыши
-                        script.MouseButton1Down:Fire()
-                        script.OnButton1Down:Fire()
-                        script.Attack:Fire()
-                        
-                        -- На всякий случай запускаем сам скрипт
-                        script.Disabled = false
-                    end)
-                end
-            end
-            
-            wait(ATTACK_SPEED)
+            debugLog("\n[SCANNER] Анализируем активный инструмент: " .. activeTool.Name)
+            printToolStructure(activeTool)
         else
-            wait(0.5)
+            debugLog("[INFO] Инструмент не найден.")
         end
+
+        wait(3) -- Повторяем сканирование каждые 3 секунды
     end
 end)()
