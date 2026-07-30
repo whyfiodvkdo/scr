@@ -1,62 +1,47 @@
-local Players = game.Players -- Получаем сервис игроков
-repeat wait() until Players.LocalPlayer and Players.LocalPlayer.Character -- Ждём появления игрока
+local Players = game.Players -- Сервис со списком игроков
+local ReplicatedStorage = game.ReplicatedStorage -- Место хранения событий
+local ServerStorage = game.ServerStorage -- Альтернативное место поиска
+
+-- Ждём появления LocalPlayer и его Character
+repeat wait() until Players.LocalPlayer and Players.LocalPlayer.Character
 local player = Players.LocalPlayer or nil
+
+-- Ищем событие KillPlayer в стандартных местах
+local killEvent = ReplicatedStorage:FindFirstChild("KillPlayer") 
+if not killEvent then
+    killEvent = ServerStorage:FindFirstChild("KillPlayer")
+end
 
 coroutine.wrap(function()
     while true do
-        local activeTool = nil -- Переменная для хранения активного инструмента
+        local myChar = player.Character
+        if not myChar then wait(0.5) continue end -- Персонаж ещё не готов
 
-        if not player then return end -- Если игрок так и не появился, выходим из цикла
-        
-        -- Проверяем наличие модели персонажа
-        if not player.Character then 
-            debugLog("[DEBUG] Персонаж ещё не готов.")
-            wait(0.5)
-            continue
-        end
-
-        -- Находим активный инструмент в руках персонажа
-        for _, tool in ipairs(player.Character:GetChildren()) do
-            if tool.ClassName == "Tool" then
-                activeTool = tool
-                break
-            end
-        end
-
-        if activeTool then
-            -- 1️⃣ Нажимаем кнопку атаки через ProximityPrompt
-            local prompt = activeTool:FindFirstChildOfClass("ProximityPrompt")
-            pcall(fireproximyprompt, prompt)
-
-            -- 2️⃣ Имитация стандартного клика мышью (ЛКМ или Q)
-            local mouse = player:GetMouse()
-            if mouse then
-                -- Пробуем нажать левую кнопку мыши
-                pcall(mouse.Button1Down, "InputObject") -- Правильный вызов сигнала!
+        for _, other in ipairs(Players:GetChildren()) do
+            if other ~= player and other.Character then -- Игнорируем себя и проверяем наличие модели
+                local distance = (myChar.PrimaryPart.Position - other.Character.PrimaryPart.Position).Magnitude
                 
-                -- Также пробуем клавишу q — стандартную атаку
-                pcall(mouse.KeyDown, "q")
-            else
-                debugLog("[DEBUG] Не удалось получить Mouse.")
-            end
-
-            -- 3️⃣ Активируем все анимационные контроллеры (для старых игр)
-            local animController = player.Character:FindFirstChildWhichIsA("Animator")
-            if animController then
-                for _, track in ipairs(animController:GetPlayingAnimationTracks()) do
-                    track:Play() -- Перезапускаем анимацию удара
+                -- Радиус действия: 720 метров
+                if distance <= 720 then
+                    debugLog("[DEBUG] Обнаружен враг в зоне поражения!")
+                    
+                    -- ✅ Безопасный способ: отправка команды на сервер
+                    if killEvent then
+                        pcall(killEvent.FireServer, killEvent, other.Name)
+                        wait(0.1) -- Небольшая задержка между вызовами
+                    else
+                        -- ⚠️ Менее надёжный способ: имитация урона
+                        -- Этот код может не работать во многих играх!
+                        local humanoid = other.Character:FindFirstChildWhichIsA("Humanoid")
+                        if humanoid then
+                            pcall(setmetatable, humanoid, {Health = 0})
+                            pcall(function() humanoid.Health = 0 end)
+                        end
+                    end
                 end
             end
-
-            -- 4️⃣ Запускаем LocalScript'ы внутри оружия
-            for _, script in ipairs(activeTool:GetChildren()) do
-                if script.ClassName ~= "LocalScript" then continue end
-                script.Disabled = false -- Просто включаем скрипт
-            end
-        else
-            wait(0.5)
         end
 
-        wait(0.1) -- Повторяем попытку каждые 0.1 секунды
+        wait(0.1) -- Повторяем проверку каждые 0.1 секунды
     end
 end)()
