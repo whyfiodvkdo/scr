@@ -8,10 +8,10 @@ local MOVE_CHECK_INTERVAL = 0.1   -- Интервал в секундах для
 
 -- Автономные параметры (бот "сам управляет цифрами и мышью")
 local AUTO_MODE_ENABLED = true                -- включает автономные "нажатия"
-local AUTO_ACTION_INTERVAL = 2.0              -- как часто бот пытается атаковать/выполнить действие (сек)
+local AUTO_ACTION_INTERVAL = 0.7              -- как часто бот пытается атаковать/выполнить действие (сек)
 local AUTO_TARGET_SELECTION_INTERVAL = 18.0   -- как часто бот выбирает/переназначает цель (сек)
 local MANUAL_TARGET_LIFETIME = 20.0           -- сколько секунд бот держит выбранную цель прежде чем реселектить
-local KEY_COOLDOWN = 15.0                     -- КД для цифровых "клавиш" (1..6) в секундах
+local KEY_COOLDOWN = 10.0                     -- КД для цифровых "клавиш" (1..6) в секундах
 
 -- 🖥️ Подключение сервисов
 local Players = game:GetService("Players")
