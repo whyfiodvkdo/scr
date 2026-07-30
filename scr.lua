@@ -1,142 +1,64 @@
 -- ⚙️ Настройки скрипта
-local MESSAGE_DURATION = 3     -- Время отображения сообщений (секунды)
-local MOVEMENT_SPEED = 50      -- Скорость полёта
-local HOVER_HEIGHT = 8        -- Высота зависания над точкой под курсом
+local DAMAGE = 9999999   -- Бесконечный урон
+local HITBOX_SCALE = Vector3.new(50, 5, 50) -- Огромные размеры (длина/высота/ширина)
+local ATTACK_SPEED = 0      -- Мгновенная атака (без задержки)
 
 -- 🖥️ Подключение к сервисам Roblox
 local Players = game.Players
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 
--- ✅ Правильная загрузка сервиса
-local UserInputService = game.UserInputService or game:GetService("UserInputService")
+-- ✏️ Функция поиска активного инструмента
+local function getActiveTool()
+    local backpack = player.Backpack
+    if not backpack then return end
 
--- ✏️ Функция вывода уведомления через SetCore() (исправлено!)
-local function showNotification(title, message, iconId, duration)
-    game.StarterGui:SetCore(
-        "SendNotification",
-        {
-            Title = title,
-            Text = message,
-            Icon = iconId or "",
-            Duration = duration or 5
-        }
-    )
-end
-
--- 🔧 Отладочные функции
-local function debugLog(msg)
-    print("[DEBUG] " .. msg)
-end
-
--- 🕸️ Создание визуальной подсказки (рамки вокруг игроков)
-local function createHighlight(targetCharacter)
-    if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
-
-    local box = Instance.new("BoxHandleAdornment", workspace.CurrentCamera) -- Проверяем камеру!
-    box.Name = "Drone_Highlight"
-    box.AlwaysOnTop = true
-    box.ZIndex = 10
-    box.Color3 = Color3.fromRGB(0, 255, 0)   
-    box.Transparency = 0.7                    
-    box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
-    box.Adornee = targetCharacter             
-    
-    return box
-end
-
--- 🗨️ Вывод имени игрока рядом с ним (исправлено! Убрали Outline)
-local function showNameTag(character, nameText)
-    if not character then return nil end
-
-    local tag = Instance.new("Hint")       -- Создаём объект Hint
-    tag.Text = "[DEBUG] " .. nameText     
-    tag.Parent = character                
-    wait(MESSAGE_DURATION)                -- Ждём несколько секунд
-    tag:Destroy()                        -- Удаляем уведомление
-end
-
--- 🟢 Переменная состояния
-local hoverMode = false -- По умолчанию управляемся мышью
-
--- Переключение режима работы
-local function toggleHover()
-    hoverMode = not hoverMode
-
-    if hoverMode then
-        showNotification("🆘 Drone Mode", "🔴 Режим зависания активирован!", "rbxassetid://9114319780")
-    else
-        showNotification("🆘 Drone Mode", "🟢 Управление по курсу мыши!", "rbxassetid://9114319780")
-    end
-end
-
--- 👟 Основной цикл управления персонажем
-local function flyAI()
-    repeat wait() until player.Character and player.Character.HumanoidRootPart 
-    and workspace.CurrentCamera -- <--- Дождались камеры!
-
-    -- 🛰️ Полный контроль над движением: отключаем стандартные аниматоры
-    for _, animator in ipairs(player.Character:GetChildren()) do
-        if animator.ClassName == "Animator" then
-            animator:StopAllAnimations()
-        elseif animator.ClassName == "AnimationController" then
-            animator.AnimationPlayed:Disconnect()
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool.ClassName == "Tool" and tool.Active then
+            return tool
         end
     end
+end
 
+-- 🔨 Модификация инструмента
+coroutine.wrap(function() -- Запускаем в корутине
     while true do
-        if not player.Character or not player.Character.HumanoidRootPart then
-            warn("[WARNING]: Персонаж исчез. Ждём восстановления...")
-            repeat wait(0.5) until player.Character and player.Character.HumanoidRootPart
-        else
-            -- 🌐 Анализируем мир
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr ~= player and plr.Character then
-                    local char = plr.Character
-                    local hum = char:FindFirstChildOfClass("Humanoid")
+        local activeTool = getActiveTool()
+        
+        if activeTool then
+            -- Изменяем урон (если есть свойство Damage)
+            if activeTool.Damage then
+                activeTool.Damage = DAMAGE
+            else
+                debugLog("[DEBUG] Свойство Damage отсутствует. Используем кастомную атаку.")
+                
+                -- Создаём огромную область поражения (Hitbox)
+                local handle = activeTool:FindFirstChildWhichIsA("Part")
+                if handle then
+                    handle.CanCollide = false -- Чтобы не мешал движению
                     
-                    if hum and hum.Health > 0 then
-                        createHighlight(char)
-                        showNameTag(char.HumanoidRootPart, plr.Name)
-                    elseif highlightObject then
-                        for _, obj in pairs(workspace.CurrentCamera:GetChildren()) do
-                            if obj.Name == "Drone_Highlight" and obj.Adornee == char then
-                                obj:Destroy()
-                            end
+                    -- Сохраняем исходный размер для восстановления
+                    local originalSize = handle.Size
+                    handle.Size = HITBOX_SCALE
+
+                    -- Добавляем обработчик столкновений
+                    handle.Touched:Connect(function(hit)
+                        local char = hit.Parent
+                        local hum = char:FindFirstChildOfClass("Humanoid")
+                        
+                        if hum and hum.Health > 0 then
+                            hum.Health = math.max(hum.Health - DAMAGE, 0)
                         end
-                    end
+                    end)
                 end
             end
 
-            -- 🛰️ Движение
-            if not hoverMode then
-                -- Следуем за курсором мыши
-                if mouse.Target and mouse.Target.Parent then
-                    local targetPos = mouse.Hit.p + Vector3.new(0, HOVER_HEIGHT, 0)
-                    player.Character.HumanoidRootPart.CFrame =
-                        CFrame.new(player.Character.HumanoidRootPart.Position, targetPos) *
-                        CFrame.new(Vector3.new(0, 0, -MOVEMENT_SPEED))
-                end
-            else
-                -- Просто висим на месте
-                player.Character.Humanoid.AutoRotate = false
-                player.Character.Humanoid.WalkSpeed = 0
-            end
+            -- Автоматическая мгновенная атака
+            wait(ATTACK_SPEED)
             
-            wait(0.05)
+            -- Восстановление размера после атаки (опционально)
+            -- if handle then handle.Size = originalSize end
+        else
+            wait(0.5) -- Проверяем наличие инструмента реже
         end
     end
-end
-
--- 🤝 Назначение кнопки переключения
-UserInputService.InputBegan:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.G then
-        toggleHover()
-    end
-end)
-
-showNotification("[🆘] Системное сообщение:", 
-                 "Летающий дрон активирован!\nНажмите G для зависания.", 
-                 "rbxassetid://9114319780")
-debugLog("Сценарий начал работу!")
-flyAI() -- Запуск основного цикла
+end)()
