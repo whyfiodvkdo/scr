@@ -1,4 +1,4 @@
--- Intelligent Combat Scanner.lua
+-- Autonomous Damage Profiler.lua
 local function Init()
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,180 +10,171 @@ local function Init()
     local character = player.Character or player.CharacterAdded:Wait()
     local rootPart = character:WaitForChild("HumanoidRootPart")
 
-    -- Ключевые слова для поиска боевых систем
-    local COMBAT_KEYWORDS = {
-        "hit", "damage", "dmg", "punch", "kick", "attack", "swing", 
-        "melee", "shoot", "fire", "cast", "combat", "weapon", "skill"
-    }
+    -- === СОСТОЯНИЕ СКРИПТА ===
+    local Victim = nil              -- Текущая цель для тестов
+    local BestRemote = nil          -- Самый эффективный RemoteEvent
+    local BestPayload = nil         -- Лучший формат данных для него
+    local MaxDamageDealt = -1       -- Рекорд нанесенного урона
+    local isProfiling = false       -- Флаг работы сканера
+    local profileQueue = {}         -- Очередь на проверку [ {remote, payload} ]
 
-    local foundRemotes = {}
-    local testTarget = nil
-    local isScanning = false
+    local function n(text) pcall(function() game.StarterGui:SetCore("SendNotification", {Title="[Profiler]", Text=text, Duration=2}) end) end
 
-    -- Функция уведомлений
-    local function n(text) 
-        pcall(function() game.StarterGui:SetCore("SendNotification", {Title="[Scanner]", Text=text, Duration=2}) end) 
-    end
-
-    -- Поиск целей под курсором
-    local function getBestTarget()
+    -- Поиск цели под курсором
+    local function getTarget()
         if not mouse.Target then return nil end
         local char = mouse.Target:FindFirstAncestorWhichIsA("Model")
         if not char then return nil end
         local hum = char:FindFirstChildOfClass("Humanoid")
-        local plr = Players:GetPlayerFromCharacter(char)
-        
-        if hum and hum.Health > 0 and char ~= character then
-            return {Char = char, Hum = hum, Name = char.Name}
-        end
+        if hum and hum.Health > 0 and char ~= character then return {Char = char, Hum = hum, Name = char.Name} end
         return nil
     end
 
-    -- Сканирование иерархии игры
-    local function deepScan()
-        n("Starting Deep Scan...")
-        table.clear(foundRemotes)
-        
-        local containers = {
-            ReplicatedStorage,
-            workspace:FindFirstChild("Game"),
-            workspace:FindFirstChild("_NODES"),
-            workspace:FindFirstChild("_REMOTES")
+    -- Генерация тестовых пакетов (payloads)
+    local function generatePayloads(targetName, targetHum)
+        return {
+            -- Формат 1: Простой урон числом
+            {targetName, 9999},
+            -- Формат 2: Объект Humanoid напрямую
+            targetHum,
+            -- Формат 3: Сложная таблица (самый частый случай в играх)
+            {Victim = targetName, Damage = 9999, Part = targetHum.RootPart},
+            {["player"] = player, ["enemy"] = targetName, ["dmg"] = math.huge},
+            -- Формат 4: Попытка убить через инстанс оружия
+            "GodWeapon_Debug",
+            -- Формат 5: Только имя (для простых систем касания)
+            targetName
         }
+    end
 
+    -- Сбор всех потенциальных точек входа
+    local function collectWeapons()
+        local weapons = {}
+        local containers = {ReplicatedStorage, workspace}
+        
         for _, cont in pairs(containers) do
-            if not cont then continue end
             for _, obj in pairs(cont:GetDescendants()) do
-                -- Ищем RemoteEvents по ключевым словам
                 if obj:IsA("RemoteEvent") then
-                    local nameLower = string.lower(obj.Name)
-                    local score = 0
-                    for _, kw in ipairs(COMBAT_KEYWORDS) do
-                        if string.find(nameLower, kw) then score = score + 1 end
-                    end
-                    if score > 0 then
-                        table.insert(foundRemotes, {Obj = obj, Score = score})
-                    end
+                    table.insert(weapons, obj)
                 end
+            end
+        end
+        return weapons
+    end
+
+    -- === ЯДРО ПРОФИЛИРОВАНИЯ ===
+    task.spawn(function()
+        while true do
+            if isProfiling and #profileQueue > 0 and Victim and Victim.Hum.Health > 0 then
+                local currentHealth = Victim.Hum.Health
                 
-                -- Ищем физические хитбоксы (невидимые детали)
-                if obj:IsA("BasePart") and obj.Transparency > 0.9 and obj.CanCollide == false then
-                    local parentName = string.lower(obj.Parent.Name)
-                    if string.find(parentName, "hit") or string.find(parentName, "zone") then
-                        table.insert(foundRemotes, {Obj = obj, Type = "TouchTrigger"})
+                local job = table.remove(profileQueue, 1)
+                local remote = job.remote
+                local data = job.data
+                
+                -- Отправляем запрос
+                pcall(function() remote:FireServer(data) end)
+                
+                -- Ждем репликацию урона от сервера (очень важный тайминг)
+                task.wait(0.1) 
+                
+                local delta = currentHealth - Victim.Hum.Health
+                
+                -- Если сервер применил урон
+                if delta > 0 then
+                    n("Tested " .. remote.Name .. ": Dealt " .. tostring(delta))
+                    
+                    if delta > MaxDamageDealt then
+                        MaxDamageDealt = delta
+                        BestRemote = remote
+                        BestPayload = data
+                        n("NEW BEST! " .. remote:GetFullName() .. " | Dmg: " .. delta)
+                        
+                        -- Мгновенное убийство текущей цели лучшим способом
+                        if Victim and Victim.Hum.Health > 0 then
+                            pcall(function() BestRemote:FireServer(BestPayload) end)
+                        end
+                    end
+                else
+                    -- Восстанавливаем хп цели, если мы её не убили, но задели (чтобы тесты были чистыми)
+                    if currentHealth ~= Victim.Hum.Health then
+                        pcall(function() Victim.Hum.Health = currentHealth end)
                     end
                 end
-            end
-        end
-
-        -- Сортируем по релевантности
-        table.sort(foundRemotes, function(a, b) 
-            if a.Score and b.Score then return a.Score > b.Score else return false end
-        end)
-
-        if #foundRemotes > 0 then
-            n("Found " .. #foundRemotes .. " potential vectors.")
-        else
-            n("No combat events found.")
-        end
-    end
-
-    -- Тестирование конкретного Remotes
-    local function probeRemote(remoteData)
-        if not testTarget then n("Look at target to probe."); return end
-        
-        local remote = remoteData.Obj
-        n("Probing: " .. remote:GetFullName())
-
-        -- Пробуем разные форматы пакетов
-        local formats = {
-            testTarget.Name, -- Строка
-            testTarget.Hum,   -- Объект Humanoid
-            {["Victim"] = testTarget.Name, ["Dmg"] = 999}, -- Таблица
-            {["plr"] = player, ["target"] = testTarget.Char} -- Сложный объект
-        }
-
-        for i, data in ipairs(formats) do
-            pcall(function() remote:FireServer(data) end)
-            task.wait(0.05) -- Даем серверу время обработать пакет
-            
-            if testTarget.Hum.Health <= 0 then
-                n("SUCCESS! Format "..i.." killed via "..remote:GetFullName())
-                return true
-            end
-        end
-        return false
-    end
-
-    -- Активация физических триггеров
-    local function touchTrigger(triggerObj)
-        n("Teleporting to trigger: " .. triggerObj:GetFullName())
-        rootPart.CFrame = triggerObj.CFrame + Vector3.new(0, 5, 0)
-        -- Принудительно вызываем событие касания
-        firetouchinterest(rootPart, triggerObj, 0)
-        task.wait(0.1)
-        firetouchinterest(rootPart, triggerObj, 1)
-    end
-
-    -- ГОРЯЧИЕ КЛАВИШИ
-    UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-
-        -- F1 - Полное сканирование карты
-        if input.KeyCode == Enum.KeyCode.F1 then
-            spawn(deepScan)
-        end
-
-        -- F2 - Выбрать цель для тестов
-        if input.KeyCode == Enum.KeyCode.F2 then
-            testTarget = getBestTarget()
-            if testTarget then
-                n("Test Target set: " .. testTarget.Name)
             else
-                n("No valid target under cursor.")
+                task.wait(0.1)
             end
-        end
-
-        -- X - Протестировать самый лучший найденный Remote
-        if input.KeyCode == Enum.KeyCode.X and not isScanning then
-            isScanning = true
-            if #foundRemotes == 0 then 
-                n("List empty. Press F1 first.") 
-                isScanning = false; return 
-            end
-
-            for _, data in ipairs(foundRemotes) do
-                if data.Type == "TouchTrigger" then
-                    touchTrigger(data.Obj)
-                    task.wait(1)
-                elseif data.Obj:IsA("RemoteEvent") then
-                    if probeRemote(data) then 
-                        isScanning = false; return 
-                    end
-                end
-            end
-            isScanning = false
         end
     end)
 
-    -- Визуальная рамка для тестовой цели
+    -- === УПРАВЛЕНИЕ ===
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+
+        -- F1: Назначить новую жертву для профилирования
+        if input.KeyCode == Enum.KeyCode.F1 then
+            local t = getTarget()
+            if t then
+                Victim = t
+                isProfiling = true
+                profileQueue = {}
+                
+                -- Собираем оружие и генерируем пакеты
+                local weapons = collectWeapons()
+                local basePayloads = generatePayloads(Victim.Name, Victim.Hum)
+                
+                for _, w in ipairs(weapons) do
+                    for _, p in ipairs(basePayloads) do
+                        table.insert(profileQueue, {remote = w, data = p})
+                    end
+                end
+                
+                n("Profiling started on: " .. Victim.Name .. ". Queue size: " .. #profileQueue)
+            else
+                n("No valid target.")
+            end
+        end
+
+        -- X: Принудительно применить ЛУЧШИЙ найденный метод к тому, кто сейчас под курсором
+        if input.KeyCode == Enum.KeyCode.X then
+            local t = getTarget()
+            if t and BestRemote and BestPayload then
+                n("Executing best vector on " .. t.Name)
+                pcall(function() BestRemote:FireServer(BestPayload) end)
+            elseif not BestRemote then
+                n("Best weapon not found yet. Use F1 first.")
+            end
+        end
+
+        -- P: Печать статуса лучшего оружия
+        if input.KeyCode == Enum.KeyCode.P then
+            if BestRemote then
+                print("[PROFILER] Best Weapon:", BestRemote:GetFullName())
+                print("[PROFILER] Payload Type:", typeof(BestPayload))
+                print("[PROFILER] Max Damage:", MaxDamageDealt)
+            else
+                print("[PROFILER] No weapon discovered yet.")
+            end
+        end
+    end)
+
+    -- Визуализация жертвы теста
     local hl = nil
     RunService.RenderStepped:Connect(function()
-        if testTarget and testTarget.Hum.Health > 0 then
+        if Victim and Victim.Hum.Health > 0 then
             if not hl then
                 hl = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
-                hl.AlwaysOnTop = true
-                hl.ZIndex = 10
-                hl.Color3 = Color3.fromRGB(0, 255, 255)
+                hl.AlwaysOnTop = true; hl.ZIndex = 10; hl.Transparency = 0.7;
             end
-            hl.Adornee = testTarget.Char
-            hl.Size = testTarget.Char:GetExtentsSize() + Vector3.new(0.2, 0.2, 0.2)
+            hl.Adornee = Victim.Char
+            hl.Size = Victim.Char:GetExtentsSize() + Vector3.new(0.2, 0.2, 0.2)
+            hl.Color3 = Color3.fromRGB(255, 100, 0)
         elseif hl then
             hl:Destroy(); hl = nil
         end
     end)
 
-    notify("[SCANNER] Ready. [F1] Scan | [F2] Set Target | [X] Execute.", 5)
+    n("Ready. [F1]=Profile Target | [X]=Use Best Weapon | [P]=Print Stats")
 end
 
 pcall(Init)
