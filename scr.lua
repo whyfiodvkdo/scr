@@ -1,19 +1,18 @@
--- ⚙️ Настройки скрипта
+-- ⚙️ Настройки скрипта (Бесконечный урон!)
 local DAMAGE = 9999999   -- Бесконечный урон
-local HITBOX_SCALE = Vector3.new(50, 5, 50) -- Огромные размеры (длина/высота/ширина)
+local HITBOX_SCALE = Vector3.new(1000, 1000, 1000) -- Огромные размеры (длина/высота/ширина)
 local ATTACK_SPEED = 0      -- Мгновенная атака (без задержки)
 
 -- 🖥️ Подключение к сервисам Roblox
 local Players = game.Players
 local player = Players.LocalPlayer
 
--- ✏️ Функция поиска активного инструмента (исправлено!)
+-- ✏️ Функция поиска активного инструмента
 local function getActiveTool()
     local backpack = player.Backpack
     if not backpack then return end
 
-    -- Ищем инструмент либо в Character (активный), либо в Backpack (неактивный)
-    for _, tool in ipairs(player.Character:GetChildren()) do -- <--- Проверяем Character!
+    for _, tool in ipairs(player.Character:GetChildren()) do -- Ищем в Character!
         if tool.ClassName == "Tool" then
             return tool
         end
@@ -27,44 +26,37 @@ local function getActiveTool()
     end
 end
 
--- 🔨 Модификация инструмента
-coroutine.wrap(function() -- Запускаем в корутине
+-- 🔨 Кастомная логика атаки
+coroutine.wrap(function() 
     while true do
         local activeTool = getActiveTool()
         
         if activeTool then
-            -- Изменяем урон (если есть свойство Damage)
-            if activeTool.Damage then
-                activeTool.Damage = DAMAGE
-            else
-                debugLog("[DEBUG] Свойство Damage отсутствует. Используем кастомную атаку.")
+            debugLog("[DEBUG] Нашли активный инструмент!")
+            
+            -- Создаём огромную область поражения (Hitbox)
+            local handle = activeTool:FindFirstChildWhichIsA("Part")
+            if handle then
+                handle.CanCollide = false -- Чтобы не мешал движению
                 
-                -- Создаём огромную область поражения (Hitbox)
-                local handle = activeTool:FindFirstChildWhichIsA("Part")
-                if handle then
-                    handle.CanCollide = false -- Чтобы не мешал движению
-                    
-                    -- Сохраняем исходный размер для восстановления (опционально)
-                    -- local originalSize = handle.Size
-                    handle.Size = HITBOX_SCALE
+                -- Сохраняем исходный размер для восстановления (опционально)
+                -- local originalSize = handle.Size
+                handle.Size = HITBOX_SCALE
 
-                    -- Добавляем обработчик столкновений
-                    handle.Touched:Connect(function(hit)
-                        local char = hit.Parent
-                        local hum = char:FindFirstChildOfClass("Humanoid")
-                        
-                        if hum and hum.Health > 0 then
-                            hum.Health = math.max(hum.Health - DAMAGE, 0)
-                        end
-                    end)
-                end
+                -- Добавляем обработчик столкновений
+                handle.Touched:Connect(function(hit)
+                    local char = hit.Parent
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    
+                    if hum and hum.Health > 0 then
+                        hum.Health = math.max(hum.Health - DAMAGE, 0)
+                    end
+                end)
+            else
+                debugLog("[WARNING]: Не найден Part внутри инструмента.")
             end
 
-            -- Автоматическая мгновенная атака
-            wait(ATTACK_SPEED)
-            
-            -- Восстановление размера после атаки (опционально)
-            -- if handle then handle.Size = originalSize end
+            wait(ATTACK_SPEED) -- Ждём перед следующим циклом проверки
         else
             wait(0.5) -- Проверяем наличие инструмента реже
         end
