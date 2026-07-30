@@ -1,52 +1,19 @@
-local function Init()
-    local Players = game.GetService("Players")
+local Players = game.GetService("Players")
     local UserInputService = game.GetService("UserInputService")
-
-    -- ⚙️ Настройки безопасности:
-    -- Должно совпадать со значением в серверном скрипте!
-    local SECRET_KEY = "SuperSecretKeyForZarubaka" -- Не забывай поменять на то же самое
-
-    -- Пароль для доступа через эксплойт
-    local ADMIN_PASSWORD = "zarubaka223-139-93"
-
-    -- Инициализация игрока
-    local player = Players.LocalPlayer or Players.PlayerAdded:Wait() 
-    if not player then return end
-
-    -- Запрос пароля
-    local input = Instance.new("ScreenGui")
-    local box = Instance.new("TextBox")
-    box.Parent = input
-    box.Size = UDim2.new(0, 400, 0, 50)
-    box.Position = UDim2.new(0.5, -200, 0.5, -25)
-    box.PlaceholderText = "Enter password..."
-    box.Text = ""
-    box.Visible = true
-    box.Parent = input
-
-    -- Ждём ввода пароля
-    while wait() do
-        if #box.Text > 0 then
-            if box.Text == ADMIN_PASSWORD then
-                notify("Password accepted!")
-                break
-            else
-                notify("Incorrect password!")
-                box.Text = ""
-            end
-        end
-    end
-
-    input:Destroy() -- Убираем окно после успешного ввода
 
     -- Кэш эвентов
     local RemoteControlPlayer = game.ReplicatedStorage:FindFirstChild("_Admin_ControlPlayer")
     local RemoteDamagePlayer = game.ReplicatedStorage:FindFirstChild("_Admin_DamagePlayer")
+    local AuthenticateAdmin = game.ReplicatedStorage:FindFirstChild("_Admin_Authenticate")
 
-    if not RemoteControlPlayer or not RemoteDamagePlayer then
+    if not RemoteControlPlayer or not RemoteDamagePlayer or not AuthenticateAdmin then
         notify("Admin tools are not loaded on the server!")
         return
     end
+
+    -- Инициализация игрока
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait() 
+    if not player then return end
 
     -- Вспомогательные функции
     local function notify(text)
@@ -74,6 +41,41 @@ local function Init()
         return nil
     end
 
+    -- Авторизация
+    local input = Instance.new("ScreenGui")
+    local box = Instance.new("TextBox")
+    box.Parent = input
+    box.Size = UDim2.new(0, 400, 0, 50)
+    box.Position = UDim2.new(0.5, -200, 0.5, -25)
+    box.PlaceholderText = "Enter your admin password..."
+    box.Text = ""
+    box.Visible = true
+    box.Parent = input
+
+    while wait() do
+        if #box.Text > 0 then
+            local authResult = AuthenticateAdmin:InvokeServer(box.Text)
+            if authResult then
+                notify("Authentication successful!")
+                
+                -- Сохраняем полученный токен доступа
+                local ACCESS_TOKEN = authResult.Token
+                local AdminIP = authResult.IP
+
+                -- Добавляем метку в модель персонажа, чтобы другие админы видели тебя
+                local adminTag = Instance.new("BoolValue", player.Character)
+                adminTag.Name = "_IsAdmin"
+
+                break
+            else
+                notify("Incorrect password!")
+                box.Text = ""
+            end
+        end
+    end
+
+    input:Destroy() -- Убираем окно после успешного входа
+
     -- Обработка ввода пользователя
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
@@ -84,7 +86,7 @@ local function Init()
 
         -- F1 - Снести всё ХП
         if input.KeyCode == Enum.KeyCode.F1 then
-            local success = RemoteDamagePlayer:InvokeServer(SECRET_KEY, victim.Name, math.huge)
+            local success = RemoteDamagePlayer:InvokeServer(ACCESS_TOKEN, victim.Name, math.huge)
             if success then
                 notify(string.format("Killed %s.", victim.Name))
             else
@@ -94,9 +96,9 @@ local function Init()
             -- Переключатель контроля
             local currentCamSubj = workspace.CurrentCamera.CameraSubject
             
-            -- Передаём контроль камере клиента
+            -- Передаём управление камерой клиенту
             RemoteControlPlayer:FireServer(
-                SECRET_KEY,
+                ACCESS_TOKEN,
                 victim.Name,
                 currentCamSubj ~= victim.Character.Humanoid
             )
@@ -107,7 +109,5 @@ local function Init()
         end
     end)
 
-    notifyAdmin Tools Ready. Controls: [RMB]=Lock Target | [F1]=Kill | [F2]=Toggle Control)
+    notifySecure Admin Tools Ready. Controls: [RMB]=Lock Target | [F1]=Kill | [F2]=Toggle Control)
 end
-
-pcall(Init)
