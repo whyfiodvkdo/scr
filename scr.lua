@@ -18,11 +18,10 @@ coroutine.wrap(function()
                 if distance <= 720 then
                     debugLog("[DEBUG] Обнаружен враг в зоне поражения!")
                     
-                    -- ⚠️ Менее надёжный способ: имитация урона через изменение Health
+                    -- ✅ Исправленный способ убийства через изменение Health по индексу
                     local humanoid = other.Character:FindFirstChildWhichIsA("Humanoid")
                     if humanoid and humanoid.Health > 0 then
-                        pcall(setmetatable, humanoid, {Health = 0})
-                        pcall(function() humanoid.Health = -math.huge end)
+                        pcall(function() humanoid["Health"] = -math.huge end)
                     end
                 end
             end
