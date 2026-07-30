@@ -7,13 +7,21 @@ local ATTACK_SPEED = 0      -- Мгновенная атака (без заде�
 local Players = game.Players
 local player = Players.LocalPlayer
 
--- ✏️ Функция поиска активного инструмента
+-- ✏️ Функция поиска активного инструмента (исправлено!)
 local function getActiveTool()
     local backpack = player.Backpack
     if not backpack then return end
 
+    -- Ищем инструмент либо в Character (активный), либо в Backpack (неактивный)
+    for _, tool in ipairs(player.Character:GetChildren()) do -- <--- Проверяем Character!
+        if tool.ClassName == "Tool" then
+            return tool
+        end
+    end
+
+    -- Если в Character нет, ищем в Backpack (на случай если персонаж ещё не спавнился)
     for _, tool in ipairs(backpack:GetChildren()) do
-        if tool.ClassName == "Tool" and tool.Active then
+        if tool.ClassName == "Tool" then
             return tool
         end
     end
@@ -36,8 +44,8 @@ coroutine.wrap(function() -- Запускаем в корутине
                 if handle then
                     handle.CanCollide = false -- Чтобы не мешал движению
                     
-                    -- Сохраняем исходный размер для восстановления
-                    local originalSize = handle.Size
+                    -- Сохраняем исходный размер для восстановления (опционально)
+                    -- local originalSize = handle.Size
                     handle.Size = HITBOX_SCALE
 
                     -- Добавляем обработчик столкновений
