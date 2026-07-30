@@ -33,7 +33,7 @@ end
 local function createHighlight(targetCharacter)
     if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
 
-    local box = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
+    local box = Instance.new("BoxHandleAdornment", workspace.CurrentCamera) -- Проверяем камеру!
     box.Name = "Drone_Highlight"
     box.AlwaysOnTop = true
     box.ZIndex = 10
@@ -50,7 +50,6 @@ local function showNameTag(character, nameText)
     if not character then return nil end
 
     local tag = Instance.new("Hint")       -- Создаём объект Hint
-    -- Контур всегда белый, его нельзя отключить программно
     tag.Text = "[DEBUG] " .. nameText     
     tag.Parent = character                
     wait(MESSAGE_DURATION)                -- Ждём несколько секунд
@@ -73,7 +72,17 @@ end
 
 -- 👟 Основной цикл управления персонажем
 local function flyAI()
-    repeat wait() until player.Character and player.Character.HumanoidRootPart
+    repeat wait() until player.Character and player.Character.HumanoidRootPart 
+    and workspace.CurrentCamera -- <--- Дождались камеры!
+
+    -- 🛰️ Полный контроль над движением: отключаем стандартные аниматоры
+    for _, animator in ipairs(player.Character:GetChildren()) do
+        if animator.ClassName == "Animator" then
+            animator:StopAllAnimations()
+        elseif animator.ClassName == "AnimationController" then
+            animator.AnimationPlayed:Disconnect()
+        end
+    end
 
     while true do
         if not player.Character or not player.Character.HumanoidRootPart then
