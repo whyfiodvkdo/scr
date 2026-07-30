@@ -19,11 +19,14 @@ local function printToolStructure(tool)
         if obj.ClassName == "LocalScript" then
             debugLog(indent .. "[SCRIPT]: " .. obj.Name)
             
-            -- Ищем функции атак внутри скрипта через метатаблицу
+            -- Ищем ВСЕ методы внутри скрипта через метатаблицу
             for k, v in pairs(getmetatable(obj)) do
-                if type(v) == 'function' and 
-                   (string.find(k, "Button") or string.find(k, "Attack")) then
+                if type(v) == 'function' then
+                    -- Это может быть функция атаки!
                     debugLog(indent .. "  -> Обнаружена функция: " .. k)
+                elseif type(v) == 'table' and rawget(v, "__index") then
+                    -- Иногда логика скрыта в таблицах
+                    debugLog(indent .. "  -> Таблица: " .. k)
                 end
             end
         elseif obj.ClassName == "ProximityPrompt" then
