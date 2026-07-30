@@ -1,162 +1,189 @@
--- Smart Touch Killer.lua
+-- Intelligent Combat Scanner.lua
 local function Init()
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local UserInputService = game:GetService("UserInputService")
+    local RunService = game:GetService("RunService")
     
     local player = Players.LocalPlayer
     local mouse = player:GetMouse()
+    local character = player.Character or player.CharacterAdded:Wait()
+    local rootPart = character:WaitForChild("HumanoidRootPart")
 
-    local killerRemote = nil      -- Найденный Remote для убийства
-    local lastScanTime = 0        -- Защита от спама (сканируем раз в N секунд)
-    local SCAN_COOLDOWN = 5       -- Интервал между проверками новых Remotes
+    -- Ключевые слова для поиска боевых систем
+    local COMBAT_KEYWORDS = {
+        "hit", "damage", "dmg", "punch", "kick", "attack", "swing", 
+        "melee", "shoot", "fire", "cast", "combat", "weapon", "skill"
+    }
 
-    -- Вспомогательная функция уведомлений
-    local function notify(text, dur)
-        pcall(function()
-            game.StarterGui:SetCore("SendNotification", {
-                Title = "[TouchKill]"; Text = text; Duration = dur or 3;
-            })
-        end)
+    local foundRemotes = {}
+    local testTarget = nil
+    local isScanning = false
+
+    -- Функция уведомлений
+    local function n(text) 
+        pcall(function() game.StarterGui:SetCore("SendNotification", {Title="[Scanner]", Text=text, Duration=2}) end) 
     end
 
-    -- Функция поиска цели под курсором
-    local function getTarget()
+    -- Поиск целей под курсором
+    local function getBestTarget()
         if not mouse.Target then return nil end
         local char = mouse.Target:FindFirstAncestorWhichIsA("Model")
         if not char then return nil end
-        
         local hum = char:FindFirstChildOfClass("Humanoid")
         local plr = Players:GetPlayerFromCharacter(char)
         
-        -- Цель должна быть живым игроком или NPC
-        if hum and hum.Health > 0 and char ~= player.Character then
-            return {Character = char, Humanoid = hum, Name = char.Name}
+        if hum and hum.Health > 0 and char ~= character then
+            return {Char = char, Hum = hum, Name = char.Name}
         end
         return nil
     end
 
-    -- Основной цикл: ищем уязвимость при нажатии ПКМ
+    -- Сканирование иерархии игры
+    local function deepScan()
+        n("Starting Deep Scan...")
+        table.clear(foundRemotes)
+        
+        local containers = {
+            ReplicatedStorage,
+            workspace:FindFirstChild("Game"),
+            workspace:FindFirstChild("_NODES"),
+            workspace:FindFirstChild("_REMOTES")
+        }
+
+        for _, cont in pairs(containers) do
+            if not cont then continue end
+            for _, obj in pairs(cont:GetDescendants()) do
+                -- Ищем RemoteEvents по ключевым словам
+                if obj:IsA("RemoteEvent") then
+                    local nameLower = string.lower(obj.Name)
+                    local score = 0
+                    for _, kw in ipairs(COMBAT_KEYWORDS) do
+                        if string.find(nameLower, kw) then score = score + 1 end
+                    end
+                    if score > 0 then
+                        table.insert(foundRemotes, {Obj = obj, Score = score})
+                    end
+                end
+                
+                -- Ищем физические хитбоксы (невидимые детали)
+                if obj:IsA("BasePart") and obj.Transparency > 0.9 and obj.CanCollide == false then
+                    local parentName = string.lower(obj.Parent.Name)
+                    if string.find(parentName, "hit") or string.find(parentName, "zone") then
+                        table.insert(foundRemotes, {Obj = obj, Type = "TouchTrigger"})
+                    end
+                end
+            end
+        end
+
+        -- Сортируем по релевантности
+        table.sort(foundRemotes, function(a, b) 
+            if a.Score and b.Score then return a.Score > b.Score else return false end
+        end)
+
+        if #foundRemotes > 0 then
+            n("Found " .. #foundRemotes .. " potential vectors.")
+        else
+            n("No combat events found.")
+        end
+    end
+
+    -- Тестирование конкретного Remotes
+    local function probeRemote(remoteData)
+        if not testTarget then n("Look at target to probe."); return end
+        
+        local remote = remoteData.Obj
+        n("Probing: " .. remote:GetFullName())
+
+        -- Пробуем разные форматы пакетов
+        local formats = {
+            testTarget.Name, -- Строка
+            testTarget.Hum,   -- Объект Humanoid
+            {["Victim"] = testTarget.Name, ["Dmg"] = 999}, -- Таблица
+            {["plr"] = player, ["target"] = testTarget.Char} -- Сложный объект
+        }
+
+        for i, data in ipairs(formats) do
+            pcall(function() remote:FireServer(data) end)
+            task.wait(0.05) -- Даем серверу время обработать пакет
+            
+            if testTarget.Hum.Health <= 0 then
+                n("SUCCESS! Format "..i.." killed via "..remote:GetFullName())
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Активация физических триггеров
+    local function touchTrigger(triggerObj)
+        n("Teleporting to trigger: " .. triggerObj:GetFullName())
+        rootPart.CFrame = triggerObj.CFrame + Vector3.new(0, 5, 0)
+        -- Принудительно вызываем событие касания
+        firetouchinterest(rootPart, triggerObj, 0)
+        task.wait(0.1)
+        firetouchinterest(rootPart, triggerObj, 1)
+    end
+
+    -- ГОРЯЧИЕ КЛАВИШИ
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
 
-        -- Если мы уже нашли способ убивать
-        if killerRemote and input.UserInputType == Enum.UserInputType.MouseButton2 then
-            local target = getTarget()
-            if target then
-                -- Пробуем разные форматы данных (самые частые)
-                killerRemote:FireServer(target.Name) 
-                task.wait(0.05)
-                killerRemote:FireServer(target.Humanoid)
-                
-                -- Проверяем результат
-                if target.Humanoid.Health <= 0 then
-                    notify("Eliminated: " .. target.Name, 2)
-                else
-                    notify("Failed to kill "..target.Name..". Try again.", 2)
-                end
+        -- F1 - Полное сканирование карты
+        if input.KeyCode == Enum.KeyCode.F1 then
+            spawn(deepScan)
+        end
+
+        -- F2 - Выбрать цель для тестов
+        if input.KeyCode == Enum.KeyCode.F2 then
+            testTarget = getBestTarget()
+            if testTarget then
+                n("Test Target set: " .. testTarget.Name)
             else
-                notify("No valid target under cursor.", 2)
+                n("No valid target under cursor.")
             end
-            return
         end
 
-        -- Если киллера еще нет, пытаемся найти его (защита от частого запуска)
-        if not killerRemote and (tick() - lastScanTime > SCAN_COOLDOWN) then
-            lastScanTime = tick()
-            local target = getTarget()
-            
-            if not target then 
-                notify("Look at a player/target to test weapons.", 2)
-                return 
+        -- X - Протестировать самый лучший найденный Remote
+        if input.KeyCode == Enum.KeyCode.X and not isScanning then
+            isScanning = true
+            if #foundRemotes == 0 then 
+                n("List empty. Press F1 first.") 
+                isScanning = false; return 
             end
 
-            notify("Scanning for vulnerability...", 2)
-            
-            local remotesFound = {}
-            local function scanContainer(container)
-                for _, obj in pairs(container:GetDescendants()) do
-                    if obj:IsA("RemoteEvent") then
-                        table.insert(remotesFound, obj)
+            for _, data in ipairs(foundRemotes) do
+                if data.Type == "TouchTrigger" then
+                    touchTrigger(data.Obj)
+                    task.wait(1)
+                elseif data.Obj:IsA("RemoteEvent") then
+                    if probeRemote(data) then 
+                        isScanning = false; return 
                     end
                 end
             end
-
-            -- Собираем все реплицируемые объекты
-            scanContainer(ReplicatedStorage)
-            if workspace:FindFirstChild("Game") then scanContainer(workspace.Game) end
-            if workspace:FindFirstChild("_NETWORK") then scanContainer(workspace._NETWORK) end
-
-            -- Тестируем каждый Remote
-            for _, remote in ipairs(remotesFound) do
-                -- Пропускаем системные эвенты Roblox (часто содержат CharacterAppearance и т.д.)
-                if string.find(string.lower(remote.Name), "character") or string.find(string.lower(remote.Name), "respawn") then continue end
-
-                -- Отправляем тестовую порцию урона
-                pcall(function()
-                    remote:FireServer(target.Name)
-                    remote:FireServer({["Victim"] = target.Name, ["Damage"] = 9999})
-                end)
-                
-                -- Ждем применения урона сервером
-                task.wait(0.1)
-
-                -- Если цель мертва — это наш ключ
-                if target.Humanoid.Health <= 0 then
-                    killerRemote = remote
-                    notify("WEAPON FOUND: " .. remote:GetFullName(), 4)
-                    
-                    -- Воскресим цель для дальнейшей игры (если нужно, можно закомментировать)
-                    --[[
-                    spawn(function()
-                        task.wait(3)
-                        if target and target.Parent then
-                            pcall(function()
-                                local newHum = target.Character:FindFirstChildOfClass("Humanoid")
-                                if newHum then newHum.Health = newHum.MaxHealth end
-                            end)
-                        end
-                    end)
-                    ]]
-                    break
-                else
-                    -- Восстанавливаем хп, если случайно сбили ему часть здоровья, но не убили
-                    if target.Humanoid.Health < target.Humanoid.MaxHealth then
-                        pcall(function() target.Humanoid.Health = target.Humanoid.MaxHealth end)
-                    end
-                end
-            end
-
-            if not killerRemote then
-                notify("Vulnerability not found.", 3)
-            end
+            isScanning = false
         end
     end)
 
-    -- Визуальная подсказка (рамка)
-    local highlight = nil
-    mouse.Move:Connect(function()
-        if killerRemote then
-            local t = getTarget()
-            if t then
-                if not highlight then
-                    highlight = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
-                    highlight.AlwaysOnTop = true
-                    highlight.ZIndex = 10
-                    highlight.Transparency = 0.7
-                    highlight.Color3 = Color3.fromRGB(255, 60, 60)
-                end
-                highlight.Adornee = t.Character
-                highlight.Size = t.Character:GetExtentsSize() + Vector3.new(0.5, 0.5, 0.5)
-            elseif highlight then
-                highlight:Destroy(); highlight = nil
+    -- Визуальная рамка для тестовой цели
+    local hl = nil
+    RunService.RenderStepped:Connect(function()
+        if testTarget and testTarget.Hum.Health > 0 then
+            if not hl then
+                hl = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
+                hl.AlwaysOnTop = true
+                hl.ZIndex = 10
+                hl.Color3 = Color3.fromRGB(0, 255, 255)
             end
+            hl.Adornee = testTarget.Char
+            hl.Size = testTarget.Char:GetExtentsSize() + Vector3.new(0.2, 0.2, 0.2)
+        elseif hl then
+            hl:Destroy(); hl = nil
         end
     end)
 
-    notify("Smart-Touch Initialized. [RMB] to find weapon/kill.", 5)
+    notify("[SCANNER] Ready. [F1] Scan | [F2] Set Target | [X] Execute.", 5)
 end
 
 pcall(Init)
-
-print("[scr.lua] Admin tool deployer started")
