@@ -22,10 +22,8 @@ local function printToolStructure(tool)
             -- Ищем ВСЕ методы внутри скрипта через метатаблицу
             for k, v in pairs(getmetatable(obj)) do
                 if type(v) == 'function' then
-                    -- Это может быть функция атаки!
                     debugLog(indent .. "  -> Обнаружена функция: " .. k)
                 elseif type(v) == 'table' and rawget(v, "__index") then
-                    -- Иногда логика скрыта в таблицах
                     debugLog(indent .. "  -> Таблица: " .. k)
                 end
             end
@@ -60,6 +58,34 @@ coroutine.wrap(function()
         if activeTool then
             debugLog("\n[SCANNER] Анализируем активный инструмент: " .. activeTool.Name)
             printToolStructure(activeTool)
+
+            -- ⚙️ Безопасная активация атак
+            -- Нажимаем кнопку атаки (если есть ProximityPrompt)
+            local prompt = activeTool:FindFirstChildOfClass("ProximityPrompt")
+            if prompt then 
+                pcall(fireproximyprompt, prompt) -- Защищённый вызов
+            end
+
+            -- Имитация стандартных событий мыши ВНУТРИ скриптов оружия
+            for _, script in pairs(activeTool:GetChildren()) do
+                if script.ClassName ~= "LocalScript" then continue end
+
+                -- Используем защищённые вызовы для каждого потенциального события
+                pcall(script.MouseButton1Down.Fire, script.MouseButton1Down)
+                pcall(script.OnButton1Down.Fire, script.OnButton1Down)
+                pcall(script.Attack.Fire, script.Attack)
+                
+                -- Дополнительно проверяем Метатаблицу скрипта
+                local meta = getmetatable(script)
+                if meta then
+                    for name, func in pairs(meta) do
+                        if type(func) == 'function' and 
+                            (name == "OnButton1Down" or name == "Attack" or name == "Hit" or name == "Activate") then
+                                pcall(func, script) -- Вызываем найденные функции атак
+                        end
+                    end
+                end
+            end
         else
             debugLog("[INFO] Инструмент не найден.")
         end
