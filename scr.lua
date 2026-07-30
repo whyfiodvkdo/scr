@@ -3,11 +3,16 @@ local MESSAGE_DURATION = 3     -- Время отображения сообще
 local MOVEMENT_SPEED = 50      -- Скорость полёта
 local HOVER_HEIGHT = 8        -- Высота зависания над точкой под курсом
 
--- 🖥️ Подключение к сервисам Roblox
-local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
+-- 🛡️ Защита от повторного запуска
+if script.Parent then return end
+
+-- 🖥️ Подключение к сервисам Roblox (исправлено!)
 local Players = game.Players
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
+
+-- ✅ Правильная загрузка сервиса
+local UserInputService = game.UserInputService or game:GetService("UserInputService")
 
 -- ✏️ Функция вывода уведомления через SetCore()
 local function showNotification(title, message, iconId, duration)
@@ -64,13 +69,9 @@ local function toggleHover()
     hoverMode = not hoverMode
 
     if hoverMode then
-        showNotification("🆘 Drone Mode", 
-                        "🔴 Режим зависания активирован!", 
-                        "rbxassetid://9114319780")
+        showNotification("🆘 Drone Mode", "🔴 Режим зависания активирован!", "rbxassetid://9114319780")
     else
-        showNotification("🆘 Drone Mode", 
-                        "🟢 Управление по курсу мыши!", 
-                        "rbxassetid://9114319780")
+        showNotification("🆘 Drone Mode", "🟢 Управление по курсу мыши!", "rbxassetid://9114319780")
     end
 end
 
