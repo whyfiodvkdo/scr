@@ -3,9 +3,6 @@ local MESSAGE_DURATION = 3     -- Время отображения сообще
 local HOVER_HEIGHT = 80       -- Высота подъёма при "зависании"
 local HOVER_TIME = 3         -- Длительность зависания (в секундах)
 
--- 🛡️ Защита от повторного запуска
-if script.Parent then return end
-
 -- 🖥️ Подключение к сервисам Roblox
 local Players = game.Players
 local player = Players.LocalPlayer
