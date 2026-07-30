@@ -25,13 +25,21 @@ local function debugLog(msg)
     print("[DEBUG] " .. msg)
 end
 
--- 🕸️ Ожидание появления Character перед началом работы
-repeat wait() until player.Character and player.Character.PrimaryPart
+-- 🕸️ Определение зоны по координатам X/Z
+local function getZoneName(posX, posZ)
+    local mapSizeX = workspace.Terrain.Size.X / 2
+    local mapSizeZ = workspace.Terrain.Size.Z / 2
 
-showNotification("🆘 Random Teleporter", 
-                 string.format("Бесконечные телепорты активированы! Высота зависания: %.0f ст.", HOVER_HEIGHT),
-                 "rbxassetid://9114319780")
-debugLog("Сценарий начал работу!")
+    if math.abs(posX) > mapSizeX * 1.2 or math.abs(posZ) > mapSizeZ * 1.2 then
+        return "🌊 Вне карты" -- За пределами видимой области
+    elseif math.abs(posX) < mapSizeX/4 and math.abs(posZ) < mapSizeZ/4 then
+        return "🏢 Центр карты"
+    else
+        local xDir = posX >= 0 and "Восток" or "Запад"
+        local zDir = posZ >= 0 and "Север" or "Юг"
+        return string.format("🗺 %s-%s", xDir, zDir)
+    end
+end
 
 -- 💨 Основной цикл телепортаций
 while true do
@@ -39,44 +47,40 @@ while true do
         warn("[WARNING]: Персонаж исчез. Ждём восстановления...")
         repeat wait(0.5) until player.Character and player.Character.HumanoidRootPart
     else
-        -- Шаг 1: Выбираем случайную точку в пределах игрового мира
+        -- Шаг 1: Выбираем абсолютно случайную точку в пределах игрового мира
         local mapSizeX = workspace.Terrain.Size.X / 2
         local mapSizeZ = workspace.Terrain.Size.Z / 2
-        
+
+        -- Мы увеличили диапазон, чтобы иногда выпадали точки за краем карты
         local randomPos = Vector3.new(
-            math.random(-mapSizeX, mapSizeX),   -- X
-            10,                                -- Y (начальная высота над полом)
-            math.random(-mapSizeZ, mapSizeZ)   -- Z
+            math.random(-mapSizeX*1.2, mapSizeX*1.2),
+            math.random(-100, 100),   -- Может появиться глубоко под землёй или высоко в небе!
+            math.random(-mapSizeZ*1.2, mapSizeZ*1.2)
         )
 
-        -- Проверяем, есть ли под этой точкой пол
-        local raycastParams = RaycastParams.new()
-        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-        raycastParams.FilterDescendantsInstances = {player.Character}
+        -- Шаг 2: Телепортация
+        player.Character.HumanoidRootPart.CFrame = CFrame.new(randomPos)
         
-        local result = workspace:Raycast(randomPos + Vector3.new(0, 100, 0), Vector3.new(0, -100, 0), raycastParams)
+        -- Логируем координаты и зону
+        local zone = getZoneName(randomPos.X, randomPos.Z)
+        debugLog(string.format("%s | Координаты: [%.1f, %.1f, %.1f]", 
+                               zone, randomPos.X, randomPos.Y, randomPos.Z))
 
-        if result then
-            -- Если пол найден, телепортируем на него
-            randomPos = result.Position + Vector3.new(0, 1, 0) -- Немного выше пола
-            
-            -- Шаг 2: Телепортация и подъём
-            player.Character.HumanoidRootPart.CFrame = CFrame.new(randomPos)
-            player.Character.HumanoidRootPart.Velocity = Vector3.new(0, HOVER_HEIGHT/HOVER_TIME, 0)
+        -- Шаг 3: Создаём иллюзию зависания с помощью BodyVelocity
+        local bv = Instance.new("BodyVelocity")
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.P = 12000
+        bv.Velocity = Vector3.new(0, HOVER_HEIGHT/HOVER_TIME, 0) -- Скорость подъёма
+        bv.Parent = player.Character.PrimaryPart
 
-            -- Логируем координаты
-            debugLog(string.format("Телепортировал на: [%.1f, %.1f, %.1f]", randomPos.X, randomPos.Y, randomPos.Z))
-            showNotification("🆘 Координаты", 
-                            string.format("Текущие: [%.1f, %.1f, %.1f]\nВысота зависания: %.0f ст.",
-                                          randomPos.X, randomPos.Y, randomPos.Z, HOVER_HEIGHT),
-                            nil, MESSAGE_DURATION * 2)
+        -- Показываем уведомление о текущем положении
+        showNotification("🆘 Координаты", 
+                        string.format("%s\n[%.1f, %.1f, %.1f]",
+                                      zone, randomPos.X, randomPos.Y, randomPos.Z),
+                        nil, MESSAGE_DURATION * 2)
 
-            -- Ждём, пока персонаж не опустится обратно
-            wait(HOVER_TIME)
-        else
-            -- Если под точкой нет пола, просто ждём немного и пробуем снова
-            debugLog("Под выбранной точкой нет поверхности. Поиск продолжается.")
-            wait(1)
-        end
+        -- Ждём, пока персонаж не опустится обратно
+        wait(HOVER_TIME + 1) -- Добавил секунду, чтобы падение выглядело плавнее
+        bv:Destroy()
     end
 end
