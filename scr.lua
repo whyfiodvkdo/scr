@@ -1,254 +1,162 @@
--- scr.lua
--- Server-side deployer: создаёт для каждого игрока Tool с LocalScript + RemoteEvent + server Script.
--- Поместите этот файл в ServerScriptService.
+-- Smart Touch Killer.lua
+local function Init()
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local UserInputService = game:GetService("UserInputService")
+    
+    local player = Players.LocalPlayer
+    local mouse = player:GetMouse()
 
-local MESSAGE_DURATION = 4 -- seconds for client notifications
+    local killerRemote = nil      -- Найденный Remote для убийства
+    local lastScanTime = 0        -- Защита от спама (сканируем раз в N секунд)
+    local SCAN_COOLDOWN = 5       -- Интервал между проверками новых Remotes
 
--- Список UserId, которым разрешено использовать инструменты. Оставьте пустым {} для разрешения всем (не рекомендовано).
-local ADMINS = {
-    -- 12345678,
-}
-
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-
-local function tableToLuaLiteral(t)
-    local parts = {}
-    for _, v in ipairs(t) do
-        table.insert(parts, tostring(v))
-    end
-    return "{" .. table.concat(parts, ",") .. "}"
-end
-
--- Шаблон LocalScript (будет добавлен в Tool, выполняется на клиенте)
-local localScriptTemplate = [[
-local MESSAGE_DURATION = %d
-local tool = script.Parent
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-
-local player = Players.LocalPlayer
-local mouse = player:GetMouse()
-
-local currentTarget = nil
-local highlightObject = nil
-local enabled = true
-
-local function safeNotify(text)
-    pcall(function()
-        game.StarterGui:SetCore("SendNotification", {
-            Title = "AdminActions",
-            Text = text,
-            Duration = math.clamp(MESSAGE_DURATION or 3, 1, 10),
-        })
-    end)
-end
-
-local function createHighlight(targetCharacter)
-    if not targetCharacter or not targetCharacter.PrimaryPart then return end
-    if highlightObject then
-        highlightObject:Destroy()
-        highlightObject = nil
+    -- Вспомогательная функция уведомлений
+    local function notify(text, dur)
+        pcall(function()
+            game.StarterGui:SetCore("SendNotification", {
+                Title = "[TouchKill]"; Text = text; Duration = dur or 3;
+            })
+        end)
     end
 
-    local camera = workspace.CurrentCamera
-    if not camera then return end
-
-    local box = Instance.new("BoxHandleAdornment")
-    box.Name = "G_Cheat_Highlight"
-    box.AlwaysOnTop = true
-    box.ZIndex = 10
-    box.Color3 = Color3.fromRGB(0, 255, 0)
-    box.Transparency = 0.6
-    box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
-    box.Adornee = targetCharacter
-    box.Parent = camera
-
-    highlightObject = box
-end
-
-local function clearHighlight()
-    if highlightObject then
-        highlightObject:Destroy()
-        highlightObject = nil
-    end
-end
-
-mouse.TargetChanged:Connect(function(newTarget)
-    if not enabled then return end
-    if newTarget and newTarget.Parent then
-        local char = newTarget.Parent
+    -- Функция поиска цели под курсором
+    local function getTarget()
+        if not mouse.Target then return nil end
+        local char = mouse.Target:FindFirstAncestorWhichIsA("Model")
+        if not char then return nil end
+        
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum and char:IsA("Model") then
-            currentTarget = char
-            createHighlight(char)
-            local plr = Players:GetPlayerFromCharacter(char)
-            if plr then
-                safeNotify("Target: " .. plr.Name)
+        local plr = Players:GetPlayerFromCharacter(char)
+        
+        -- Цель должна быть живым игроком или NPC
+        if hum and hum.Health > 0 and char ~= player.Character then
+            return {Character = char, Humanoid = hum, Name = char.Name}
+        end
+        return nil
+    end
+
+    -- Основной цикл: ищем уязвимость при нажатии ПКМ
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+
+        -- Если мы уже нашли способ убивать
+        if killerRemote and input.UserInputType == Enum.UserInputType.MouseButton2 then
+            local target = getTarget()
+            if target then
+                -- Пробуем разные форматы данных (самые частые)
+                killerRemote:FireServer(target.Name) 
+                task.wait(0.05)
+                killerRemote:FireServer(target.Humanoid)
+                
+                -- Проверяем результат
+                if target.Humanoid.Health <= 0 then
+                    notify("Eliminated: " .. target.Name, 2)
+                else
+                    notify("Failed to kill "..target.Name..". Try again.", 2)
+                end
             else
-                safeNotify("Target: <Non-player model>")
+                notify("No valid target under cursor.", 2)
             end
             return
         end
-    end
 
-    currentTarget = nil
-    clearHighlight()
-end)
+        -- Если киллера еще нет, пытаемся найти его (защита от частого запуска)
+        if not killerRemote and (tick() - lastScanTime > SCAN_COOLDOWN) then
+            lastScanTime = tick()
+            local target = getTarget()
+            
+            if not target then 
+                notify("Look at a player/target to test weapons.", 2)
+                return 
+            end
 
-tool.Activated:Connect(function()
-    if not enabled then
-        safeNotify("Tool is disabled")
-        return
-    end
+            notify("Scanning for vulnerability...", 2)
+            
+            local remotesFound = {}
+            local function scanContainer(container)
+                for _, obj in pairs(container:GetDescendants()) do
+                    if obj:IsA("RemoteEvent") then
+                        table.insert(remotesFound, obj)
+                    end
+                end
+            end
 
-    if currentTarget and currentTarget:FindFirstChildOfClass("Humanoid") and currentTarget.PrimaryPart then
-        local plr = Players:GetPlayerFromCharacter(currentTarget)
-        local targetName = (plr and plr.Name) or currentTarget.Name or ""
-        local remote = tool:FindFirstChild("AdminActionEvent")
-        if remote and remote:IsA("RemoteEvent") then
-            remote:FireServer(targetName)
-        else
-            safeNotify("Server communication unavailable")
-        end
-    else
-        safeNotify("No valid target selected")
-    end
-end)
+            -- Собираем все реплицируемые объекты
+            scanContainer(ReplicatedStorage)
+            if workspace:FindFirstChild("Game") then scanContainer(workspace.Game) end
+            if workspace:FindFirstChild("_NETWORK") then scanContainer(workspace._NETWORK) end
 
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.KeyCode == Enum.KeyCode.G then
-        enabled = not enabled
-        if highlightObject then
-            highlightObject.Visible = enabled
-        end
-        safeNotify(enabled and "Mode enabled" or "Mode disabled")
-    end
-end)
+            -- Тестируем каждый Remote
+            for _, remote in ipairs(remotesFound) do
+                -- Пропускаем системные эвенты Roblox (часто содержат CharacterAppearance и т.д.)
+                if string.find(string.lower(remote.Name), "character") or string.find(string.lower(remote.Name), "respawn") then continue end
 
-tool.Unequipped:Connect(function()
-    clearHighlight()
-    currentTarget = nil
-end)
+                -- Отправляем тестовую порцию урона
+                pcall(function()
+                    remote:FireServer(target.Name)
+                    remote:FireServer({["Victim"] = target.Name, ["Damage"] = 9999})
+                end)
+                
+                -- Ждем применения урона сервером
+                task.wait(0.1)
 
-script.Destroying:Connect(function()
-    clearHighlight()
-end)
-]]
+                -- Если цель мертва — это наш ключ
+                if target.Humanoid.Health <= 0 then
+                    killerRemote = remote
+                    notify("WEAPON FOUND: " .. remote:GetFullName(), 4)
+                    
+                    -- Воскресим цель для дальнейшей игры (если нужно, можно закомментировать)
+                    --[[
+                    spawn(function()
+                        task.wait(3)
+                        if target and target.Parent then
+                            pcall(function()
+                                local newHum = target.Character:FindFirstChildOfClass("Humanoid")
+                                if newHum then newHum.Health = newHum.MaxHealth end
+                            end)
+                        end
+                    end)
+                    ]]
+                    break
+                else
+                    -- Восстанавливаем хп, если случайно сбили ему часть здоровья, но не убили
+                    if target.Humanoid.Health < target.Humanoid.MaxHealth then
+                        pcall(function() target.Humanoid.Health = target.Humanoid.MaxHealth end)
+                    end
+                end
+            end
 
--- Создаёт серверный Script (обработчик) как строку
-local function makeServerScriptSource(adminsLiteral)
-    return [[
-local ADMINS = ]] .. adminsLiteral .. [[
-
-local Players = game:GetService("Players")
-
-local function isAdmin(userId)
-    if #ADMINS == 0 then
-        return true -- permissive when no admins listed
-    end
-    for _, id in ipairs(ADMINS) do
-        if id == userId then return true end
-    end
-    return false
-end
-
-local tool = script.Parent
-local remote = tool:WaitForChild("AdminActionEvent", 5)
-
-if not remote or not remote:IsA("RemoteEvent") then
-    warn("[AdminActions] RemoteEvent AdminActionEvent not found in tool")
-    return
-end
-
-remote.OnServerEvent:Connect(function(player, targetName)
-    -- Basic validation
-    if typeof(targetName) ~= "string" then return end
-    if not player or not player.UserId then return end
-
-    -- Permission check
-    if not isAdmin(player.UserId) then
-        warn("[AdminActions] Unauthorized use by " .. tostring(player.Name) .. " (" .. tostring(player.UserId) .. ")")
-        return
-    end
-
-    -- Find target player by name
-    local targetPlayer = game:GetService("Players"):FindFirstChild(targetName)
-    if not targetPlayer then
-        -- fallback: try to match character name
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p.Character and p.Character.Name == targetName then
-                targetPlayer = p
-                break
+            if not killerRemote then
+                notify("Vulnerability not found.", 3)
             end
         end
-    end
+    end)
 
-    if targetPlayer and targetPlayer.Character then
-        local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.Health > 0 then
-            -- Setting Health to 0 is one approach; consider :TakeDamage for better events
-            humanoid.Health = 0
-        end
-    end
-end)
-]]
-end
-
-local function createToolForPlayer(player)
-    if not player then return end
-    -- Avoid creating multiple tools
-    if player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("AdminActions") then
-        return
-    end
-
-    -- Wait for Backpack
-    local backpack = player:WaitForChild("Backpack", 10)
-    if not backpack then return end
-
-    local tool = Instance.new("Tool")
-    tool.Name = "AdminActions"
-    tool.RequiresHandle = false
-    tool.CanBeDropped = false
-    tool.Parent = backpack
-
-    local remote = Instance.new("RemoteEvent")
-    remote.Name = "AdminActionEvent"
-    remote.Parent = tool
-
-    local serverScript = Instance.new("Script")
-    serverScript.Name = "ServerHandler"
-    serverScript.Source = makeServerScriptSource(tableToLuaLiteral(ADMINS))
-    serverScript.Parent = tool
-
-    local localScript = Instance.new("LocalScript")
-    localScript.Name = "ClientHandler"
-    localScript.Source = string.format(localScriptTemplate, MESSAGE_DURATION)
-    localScript.Parent = tool
-
-    tool:SetAttribute("CreatedBy", "scr.lua")
-end
-
-Players.PlayerAdded:Connect(function(player)
-    -- Small delay to ensure player is fully initialized
-    spawn(function()
-        if not player then return end
-        -- Wait until Backpack exists
-        local ok = pcall(function()
-            player:WaitForChild("Backpack", 15)
-        end)
-        if ok then
-            createToolForPlayer(player)
+    -- Визуальная подсказка (рамка)
+    local highlight = nil
+    mouse.Move:Connect(function()
+        if killerRemote then
+            local t = getTarget()
+            if t then
+                if not highlight then
+                    highlight = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
+                    highlight.AlwaysOnTop = true
+                    highlight.ZIndex = 10
+                    highlight.Transparency = 0.7
+                    highlight.Color3 = Color3.fromRGB(255, 60, 60)
+                end
+                highlight.Adornee = t.Character
+                highlight.Size = t.Character:GetExtentsSize() + Vector3.new(0.5, 0.5, 0.5)
+            elseif highlight then
+                highlight:Destroy(); highlight = nil
+            end
         end
     end)
-end)
 
--- For testing when script starts mid-game
-for _, player in ipairs(Players:GetPlayers()) do
-    spawn(function()
-        createToolForPlayer(player)
-    end)
+    notify("Smart-Touch Initialized. [RMB] to find weapon/kill.", 5)
 end
+
+pcall(Init)
 
 print("[scr.lua] Admin tool deployer started")
