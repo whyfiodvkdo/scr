@@ -1,11 +1,13 @@
 -- Passive Observer Killer v4: Dynamic Profiler & Sandbox Mode
 local function Init()
     local Players = game:GetService("Players")
-    local UserInputService = game:GetService("UserInputService")
+    local UserInputService = game.GetService(game, "UserInputService") -- Защита от nil
     local RunService = game:GetService("RunService")
     
     -- === НАСТРОЙКИ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
-    local player = Players.LocalPlayer
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()  -- Ждём игрока
+    if not player then return end
+
     local character = nil
     local rootPart = nil
     local humanoid = nil
@@ -70,14 +72,13 @@ local function Init()
         end
 
         -- Ищем вызовы событий внутри клиентских скриптов (LocalScripts).
-        -- Это критически важно, так как многие игровые механики реализованы именно таким образом.
-        for _, script in ipairs(game:GetService("Lighting"):GetChildren()) do
+        -- Это критически важно! Многие игровые механики реализованы именно так.
+        for _, script in ipairs(game.Lighting:GetChildren()) do
             if script:IsA("LocalScript") then
                 local src = script.Source
                 for _, remote in ipairs(weapons) do
                     -- Проверяем, есть ли вызов этого события в скрипте
                     if string.find(src, "%."..remote.Name..":FireServer%(", 1, true) then
-                        -- Если нашли — помечаем его как потенциально опасный
                         table.insert(weapons, remote)
                     end
                 end
@@ -87,7 +88,7 @@ local function Init()
         return weapons
     end
 
-    -- Профилирование одного конкретного RemoteEvent или TouchTrigger
+    -- Профилирование одного конкретного RemoteEvent
     local function profile(remoteData)
         if not Target then return end
 
@@ -101,7 +102,7 @@ local function Init()
             -- Отправляем пакет
             pcall(function() remoteData.remoteObj:FireServer(data) end)
             
-            task.wait(0.05) -- Даем серверу время обработать урон
+            task.wait(0.15) -- Защита от анти-спама Roblox
 
             -- Смотрим результат
             local delta = currentHealth - victimHum.Health
@@ -117,11 +118,6 @@ local function Init()
                 }
                 print("[LOG] New Best Weapon:", remoteData.remoteObj:GetFullName(), "| Payload Type:", typeof(data))
             end
-
-            -- Восстанавливаем здоровье цели после теста
-            if victimHum.Health < currentHealth then
-                pcall(function() victimHum.Health = currentHealth end)
-            end
         end
     end
 
@@ -129,7 +125,7 @@ local function Init()
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
 
-        -- Выбор цели клавишей F (ранее ПКМ)
+        -- Выбор цели клавишей F
         if input.KeyCode == Enum.KeyCode.F then
             Target = getTarget()
             if Target then
@@ -140,7 +136,7 @@ local function Init()
             end
         end
 
-        -- АТАКУЕМ ПО ЛКМ (осталось без изменений)
+        -- АТАКУЕМ ПО ЛКМ
         if input.UserInputType == Enum.UserInputType.MouseButton1 and not isProfiling then
             if not character or not Target or Target.Hum.Health <= 0 then 
                 n("Select a target first (F key).")
@@ -187,21 +183,20 @@ local function Init()
             end
         end
 
-        -- Управление режимом Песочницы (изменено с F9 на F1)
+        -- Управление режимом Песочницы
         if input.KeyCode == Enum.KeyCode.F1 then
             isProfiling = not isProfiling
             n(isProfiling and "Sandbox mode ON" or "Sandbox mode OFF")
         end
 
-        -- Отключение уведомлений (изменено с NUMPAD0 на F3)
+        -- Отключение уведомлений
         if input.KeyCode == Enum.KeyCode.F3 then
             NotificationsEnabled = not NotificationsEnabled
             n(NotificationsEnabled and "Notifications enabled" or "Notifications disabled")
         end
     end)
 
-    -- === ПАССИВНОЕ НАБЛЮДЕНИЕ ЗА ВСЕМИ СОБЫТИЯМИ В ИГРЕ ===
-    -- Этот цикл работает всегда с момента запуска
+    -- === ПАССИВНОЕ НАБЛЮДЕНИЕ ЗА СОБЫТИЯМИ ===
     task.spawn(function()
         while wait(1) do -- Обновляем список раз в секунду
             local allRemotes = collectWeapons()
@@ -249,10 +244,7 @@ local function Init()
                                 bestPayload = args,
                                 maxDamage = delta
                             }
-                            print(" [LOG] Weapon Found:", r:GetFullName(), "| Dmg:", delta)
-                        else
-                            -- Иногда урон может быть отрицательным из-за регенерации
-                            -- Мы игнорируем такие случаи
+                            print("Weapon Found:", r:GetFullName(), "| Dmg:", delta)
                         end
                     end
                 end)
@@ -261,32 +253,35 @@ local function Init()
     end)
 
     -- === РЕЖИМ ПЕСОЧНИЦЫ (Sandbox Mode): Автоматический сбор информации ===
-    -- Этот режим заставляет вашего персонажа бегать по карте и кликать мышью,
-    -- чтобы найти хит-боксы и скрытые триггеры.
     task.spawn(function()
         while wait() do
             if not isProfiling then continue end
 
             -- Ожидание загрузки персонажа
-            if not character or not rootPart then
-                wait(1)
-                continue
-            end
+            repeat
+                character = player.Character or player.CharacterAdded:Wait()
+                rootPart = character.PrimaryPart
+                humanoid = character:FindFirstChildOfClass("Humanoid")
+                mouse = player:GetMouse()
+                wait(1) -- Даем объектам стабилизироваться
+            until rootPart and humanoid and mouse
 
             -- Перемещаемся по карте
             local newPos = Vector3.new(
                 math.random(-workspace.Terrain.Size.X / 2, workspace.Terrain.Size.X / 2),
                 10, -- Высота над землей
-                math.random(-workspace.Terrain.Size.Z / 2, workspace.Z / 2)
+                math.random(-workspace.Terrain.Size.Z / 2, workspace.Terrain.Size.Z / 2)
             )
             rootPart.CFrame = CFrame.new(newPos)
             task.wait(0.1)
             humanoid.Jump = true -- Имитация активности
 
-            -- Случайно кликаем мышкой
-            firetouchinterest(rootPart, mouse.Target, 0)
-            task.wait(0.1)
-            firetouchinterest(rootPart, mouse.Target, 1)
+            -- Случайные клики мышкой только если у нас есть цель
+            if Target then
+                firetouchinterest(rootPart, Target.Char.PrimaryPart, 0)
+                task.wait(0.1)
+                firetouchinterest(rootPart, Target.Char.PrimaryPart, 1)
+            end
 
             -- Тестируем все найденные Remotes
             local remotes = collectWeapons()
@@ -315,8 +310,8 @@ local function Init()
         end
     end)
 
-    -- === МЕТОД ОЖИДАНИЯ ЗАГРУЗКИ ПЕРСОНАЖА ===
-    -- Это гарантирует, что ни одна функция не будет вызвана раньше времени.
+    -- === МЕТОД ЗАГРУЗКИ ПЕРСОНАЖА ===
+    -- Этот метод гарантирует, что ни одна функция не будет вызвана раньше времени.
     local function AwaitCharacter()
         repeat
             character = player.Character or player.CharacterAdded:Wait()
@@ -326,7 +321,7 @@ local function Init()
             wait(1) -- Даем объектам стабилизироваться
         until rootPart and humanoid and mouse
 
-        n"[Profiler v4] Character loaded. Ready to observe.")
+        n("Profiler v4 loaded. Use F to select target, LMB to attack.")
     end
 
     -- Запускаем ожидание в корутине, чтобы не блокировать выполнение loadstring
