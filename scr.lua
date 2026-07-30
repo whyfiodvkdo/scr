@@ -1,3 +1,4 @@
+-- ⚙️ Настройки скрипта (Бесконечный урон!)
 local DAMAGE = 9999999   -- Бесконечный урон
 local HITBOX_SCALE = Vector3.new(5000, 5000, 5000) -- Огромные размеры (длина/высота/ширина)
 local ATTACK_SPEED = 0      -- Мгновенная атака (без задержки)
@@ -5,10 +6,15 @@ local ATTACK_SPEED = 0      -- Мгновенная атака (без заде�
 local Players = game.Players
 local player = Players.LocalPlayer
 
--- ✏️ Функция поиска активного инструмента
+-- ✏️ Функция поиска активного инструмента (исправлено ожидание Backpack)
 local function getActiveTool()
-    local backpack = player.Backpack
-    if not backpack then return end
+    local backpack = player.Character and player.Character:FindFirstChild("Backpack")
+    
+    -- Если рюкзака нет, ждём его появления
+    if not backpack then 
+        repeat wait() until player.Character and player.Character:FindFirstChild("Backpack") == true
+        backpack = player.Character:WaitForChild("Backpack", 10)
+    end
 
     for _, tool in ipairs(player.Character:GetChildren()) do -- Ищем в Character!
         if tool.ClassName == "Tool" and tool.Parent == player.Character then
@@ -16,7 +22,7 @@ local function getActiveTool()
         end
     end
 
-    -- Если в Character нет, ищем в Backpack (на случай если персонаж ещё не спавнился)
+    -- Теперь ищем только внутри гарантированно существующего Backpack
     for _, tool in ipairs(backpack:GetChildren()) do
         if tool.ClassName == "Tool" then
             return tool
@@ -34,11 +40,12 @@ coroutine.wrap(function()
             -- Проверяем наличие физической основы (Handle)
             local handle = activeTool:FindFirstChildWhichIsA("BasePart")
             if handle then
+                handle.CanCollide = false -- Чтобы не мешал движению
+                
                 -- Сохраняем исходный размер для восстановления (опционально)
                 local originalSize = handle.Size
 
                 -- Создаём огромную область поражения (Hitbox)
-                handle.CanCollide = false -- Чтобы не мешал движению
                 handle.Size = HITBOX_SCALE
 
                 -- Добавляем обработчик столкновений
