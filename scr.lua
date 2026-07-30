@@ -1,14 +1,13 @@
 -- ⚙️ Настройки скрипта
 local MESSAGE_DURATION = 3     -- Время отображения сообщений (секунды)
-local HOVER_HEIGHT = 0       -- Высота подъёма при "зависании"
-local HOVER_TIME = 3         -- Длительность зависания (в секундах)
-
--- 🛡️ Защита от повторного запуска
-if script.Parent then return end
+local MOVEMENT_SPEED = 50      -- Скорость полёта
+local HOVER_HEIGHT = 8        -- Высота зависания над точкой под курсом
 
 -- 🖥️ Подключение к сервисам Roblox
+local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
 local Players = game.Players
 local player = Players.LocalPlayer
+local mouse = player:GetMouse()
 
 -- ✏️ Функция вывода уведомления через SetCore()
 local function showNotification(title, message, iconId, duration)
@@ -28,59 +27,112 @@ local function debugLog(msg)
     print("[DEBUG] " .. msg)
 end
 
--- 🕸️ Определение зоны по координатам X/Z
-local function getZoneName(posX, posZ)
-    local mapSizeX = workspace.Terrain.Size.X / 2
-    local mapSizeZ = workspace.Terrain.Size.Z / 2
+-- 🕸️ Создание визуальной подсказки (рамки вокруг игроков)
+local function createHighlight(targetCharacter)
+    if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
 
-    if math.abs(posX) > mapSizeX * 1.2 or math.abs(posZ) > mapSizeZ * 1.2 then
-        return "🌊 Вне карты" -- За пределами видимой области
-    elseif math.abs(posX) < mapSizeX/4 and math.abs(posZ) < mapSizeZ/4 then
-        return "🏢 Центр карты"
+    local box = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
+    box.Name = "Drone_Highlight"
+    box.AlwaysOnTop = true
+    box.ZIndex = 10
+    box.Color3 = Color3.fromRGB(0, 255, 0)   
+    box.Transparency = 0.7                    
+    box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
+    box.Adornee = targetCharacter             
+    
+    return box
+end
+
+-- 🗨️ Вывод имени игрока рядом с ним
+local function showNameTag(character, nameText)
+    if not character then return nil end
+
+    local tag = Instance.new("Hint")       
+    tag.TextColor3 = Color3.fromRGB(256, 256, 256)
+    tag.Outline = false                   
+    tag.Text = "[DEBUG] " .. nameText
+    tag.Parent = character                
+    wait(MESSAGE_DURATION)           
+    tag:Destroy()                        
+end
+
+-- 🟢 Переменная состояния
+local hoverMode = false -- По умолчанию управляемся мышью
+
+-- Переключение режима работы
+local function toggleHover()
+    hoverMode = not hoverMode
+
+    if hoverMode then
+        showNotification("🆘 Drone Mode", 
+                        "🔴 Режим зависания активирован!", 
+                        "rbxassetid://9114319780")
     else
-        local xDir = posX >= 0 and "Восток" or "Запад"
-        local zDir = posZ >= 0 and "Север" or "Юг"
-        return string.format("🗺 %s-%s", xDir, zDir)
+        showNotification("🆘 Drone Mode", 
+                        "🟢 Управление по курсу мыши!", 
+                        "rbxassetid://9114319780")
     end
 end
 
--- 💨 Основной цикл телепортаций
-while true do
-    if not player.Character or not player.Character.HumanoidRootPart then
-        warn("[WARNING]: Персонаж исчез. Ждём восстановления...")
-        repeat wait(0.5) until player.Character and player.Character.HumanoidRootPart
-    else
-        -- Шаг 1: Выбираем абсолютно случайную точку в пределах игрового мира
-        -- Мы увеличили диапазон, чтобы иногда выпадали точки за краем карты
-        local randomPos = Vector3.new(
-            math.random(-workspace.Terrain.Size.X/2 * 1.2, workspace.Terrain.Size.X/2 * 1.2),
-            math.random(-100, 100),   -- Может появиться глубоко под землёй или высоко в небе!
-            math.random(-workspace.Terrain.Size.Z/2 * 1.2, workspace.Terrain.Size.Z/2 * 1.2)
-        )
+-- 👟 Основной цикл управления персонажем
+local function flyAI()
+    repeat wait() until player.Character and player.Character.HumanoidRootPart
 
-        -- МГНОВЕННАЯ ТЕЛЕПОРТАЦИЯ без проверки пола
-        player.Character.HumanoidRootPart.CFrame = CFrame.new(randomPos)
-        
-        -- Логируем координаты и зону
-        local zone = getZoneName(randomPos.X, randomPos.Z)
-        debugLog(string.format("%s | Координаты: [%.1f, %.1f, %.1f]", 
-                               zone, randomPos.X, randomPos.Y, randomPos.Z))
+    while true do
+        if not player.Character or not player.Character.HumanoidRootPart then
+            warn("[WARNING]: Персонаж исчез. Ждём восстановления...")
+            repeat wait(0.5) until player.Character and player.Character.HumanoidRootPart
+        else
+            -- 🌐 Анализируем мир
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= player and plr.Character then
+                    local char = plr.Character
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    
+                    if hum and hum.Health > 0 then
+                        createHighlight(char)
+                        showNameTag(char.HumanoidRootPart, plr.Name)
+                    elseif highlightObject then
+                        for _, obj in pairs(workspace.CurrentCamera:GetChildren()) do
+                            if obj.Name == "Drone_Highlight" and obj.Adornee == char then
+                                obj:Destroy()
+                            end
+                        end
+                    end
+                end
+            end
 
-        -- Шаг 3: Создаём иллюзию зависания с помощью BodyVelocity
-        local bv = Instance.new("BodyVelocity")
-        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        bv.P = 12000
-        bv.Velocity = Vector3.new(0, HOVER_HEIGHT/HOVER_TIME, 0) -- Скорость подъёма
-        bv.Parent = player.Character.PrimaryPart
-
-        -- Показываем уведомление о текущем положении
-        showNotification("🆘 Координаты", 
-                        string.format("%s\n[%.1f, %.1f, %.1f]",
-                                      zone, randomPos.X, randomPos.Y, randomPos.Z),
-                        nil, MESSAGE_DURATION * 2)
-
-        -- Ждём, пока персонаж не опустится обратно
-        wait(HOVER_TIME + 1) -- Добавил секунду, чтобы падение выглядело плавнее
-        bv:Destroy()
+            -- 🛰️ Движение
+            if not hoverMode then
+                -- Следуем за курсором мыши
+                if mouse.Target and mouse.Target.Parent then
+                    local targetPos = mouse.Hit.p + Vector3.new(0, HOVER_HEIGHT, 0)
+                    player.Character.HumanoidRootPart.CFrame =
+                        CFrame.new(player.Character.HumanoidRootPart.Position, targetPos) *
+                        CFrame.new(Vector3.new(0, 0, -MOVEMENT_SPEED))
+                end
+            else
+                -- Просто висим на месте
+                player.Character.Humanoid.AutoRotate = false
+                player.Character.Humanoid.WalkSpeed = 0
+            end
+            
+            wait(0.05)
+        end
     end
 end
+
+-- 🔄 Инициализация при первом запуске loadstring
+showNotification("[🆘] Системное сообщение:", 
+                 "Летающий дрон активирован!\nНажмите G для зависания.", 
+                 "rbxassetid://9114319780")
+debugLog("Сценарий начал работу!")
+
+-- 🤝 Назначение кнопки переключения
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.G then
+        toggleHover()
+    end
+end)
+
+flyAI() -- Запуск основного цикла
