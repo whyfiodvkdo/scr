@@ -1,17 +1,21 @@
 local Players = game.Players -- Получаем сервис игроков
-repeat wait() until Players.LocalPlayer and Players.LocalPlayer.Character -- Ждём появления игрока и его модели
+repeat wait() until Players.LocalPlayer and Players.LocalPlayer.Character -- Ждём появления игрока
 local player = Players.LocalPlayer or nil
-if not player then return end -- Если игрок так и не появился, выходим из скрипта
 
 coroutine.wrap(function()
     while true do
         local activeTool = nil -- Переменная для хранения активного инструмента
 
+        if not player then return end -- Если игрок так и не появился, выходим из цикла
+        
+        -- Проверяем наличие модели персонажа
         if not player.Character then 
             debugLog("[DEBUG] Персонаж ещё не готов.")
-            wait(0.5) continue
+            wait(0.5)
+            continue
         end
 
+        -- Находим активный инструмент в руках персонажа
         for _, tool in ipairs(player.Character:GetChildren()) do
             if tool.ClassName == "Tool" then
                 activeTool = tool
@@ -28,9 +32,9 @@ coroutine.wrap(function()
             local mouse = player:GetMouse()
             if mouse then
                 -- Пробуем нажать левую кнопку мыши
-                pcall(mouse.Button1Down.Fire, mouse.Button1Down)
+                pcall(mouse.Button1Down, "InputObject") -- Правильный вызов сигнала!
                 
-                -- Если игра настроена на клавиатуру, используем q
+                -- Также пробуем клавишу q — стандартную атаку
                 pcall(mouse.KeyDown, "q")
             else
                 debugLog("[DEBUG] Не удалось получить Mouse.")
