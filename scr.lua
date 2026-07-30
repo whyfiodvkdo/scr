@@ -4,7 +4,7 @@ local MOVEMENT_SPEED = 50      -- Скорость полёта
 local HOVER_HEIGHT = 8        -- Высота зависания над точкой под курсом
 
 
--- 🖥️ Подключение к сервисам Roblox (исправлено!)
+-- 🖥️ Подключение к сервисам Roblox
 local Players = game.Players
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
@@ -46,17 +46,16 @@ local function createHighlight(targetCharacter)
     return box
 end
 
--- 🗨️ Вывод имени игрока рядом с ним
+-- 🗨️ Вывод имени игрока рядом с ним (исправлено!)
 local function showNameTag(character, nameText)
     if not character then return nil end
 
-    local tag = Instance.new("Hint")       
-    tag.TextColor3 = Color3.fromRGB(256, 256, 256)
-    tag.Outline = false                   
-    tag.Text = "[DEBUG] " .. nameText
+    local tag = Instance.new("Hint")       -- Создаём объект Hint
+    tag.Outline = false                   -- Убираем контур (цвет текста всегда белый)
+    tag.Text = "[DEBUG] " .. nameText    -- Устанавливаем только текст
     tag.Parent = character                
-    wait(MESSAGE_DURATION)           
-    tag:Destroy()                        
+    wait(MESSAGE_DURATION)                -- Ждём несколько секунд
+    tag:Destroy()                        -- Удаляем уведомление
 end
 
 -- 🟢 Переменная состояния
