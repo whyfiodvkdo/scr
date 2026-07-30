@@ -1,113 +1,122 @@
-local Players = game.GetService("Players")
-    local UserInputService = game.GetService("UserInputService")
+-- ⚙️ Настройки скрипта
+local MOVEMENT_SPEED = 15      -- Скорость движения бота
+local MESSAGE_DURATION = 3     -- Время отображения сообщений (секунды)
 
-    -- Кэш эвентов
-    local RemoteControlPlayer = game.ReplicatedStorage:FindFirstChild("_Admin_ControlPlayer")
-    local RemoteDamagePlayer = game.ReplicatedStorage:FindFirstChild("_Admin_DamagePlayer")
-    local AuthenticateAdmin = game.ReplicatedStorage:FindFirstChild("_Admin_Authenticate")
+-- 🛡️ Защита от повторного запуска
+if script.Parent then return end
 
-    if not RemoteControlPlayer or not RemoteDamagePlayer or not AuthenticateAdmin then
-        notify("Admin tools are not loaded on the server!")
-        return
-    end
+-- 🖥️ Подключение к сервисам Roblox
+local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
+local Players = game.Players
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
 
-    -- Инициализация игрока
-    local player = Players.LocalPlayer or Players.PlayerAdded:Wait() 
-    if not player then return end
-
-    -- Вспомогательные функции
-    local function notify(text)
-        pcall(function()
-            game.StarterGui:SetCore("SendNotification", {
-                Title = "[Admin]",
-                Text = tostring(text),
-                Duration = 3})
-        end)
-        print("" .. tostring(text))
-    end
-
-    -- Безопасная проверка цели под курсором
-    local function getTarget()
-        local mouse = player:GetMouse()
-        local targetPart = mouse.Target
-        if not targetPart then return nil end
-        local model = targetPart:FindFirstAncestorWhichIsA("Model")
-        if not model then return nil end
-        
-        local plr = Players:GetPlayerFromCharacter(model)
-        if plr and plr ~= player then
-            return plr
-        end
-        return nil
-    end
-
-    -- Авторизация
-    local input = Instance.new("ScreenGui")
-    local box = Instance.new("TextBox")
-    box.Parent = input
-    box.Size = UDim2.new(0, 400, 0, 50)
-    box.Position = UDim2.new(0.5, -200, 0.5, -25)
-    box.PlaceholderText = "Enter your admin password..."
-    box.Text = ""
-    box.Visible = true
-    box.Parent = input
-
-    while wait() do
-        if #box.Text > 0 then
-            local authResult = AuthenticateAdmin:InvokeServer(box.Text)
-            if authResult then
-                notify("Authentication successful!")
-                
-                -- Сохраняем полученный токен доступа
-                local ACCESS_TOKEN = authResult.Token
-                local AdminIP = authResult.IP
-
-                -- Добавляем метку в модель персонажа, чтобы другие админы видели тебя
-                local adminTag = Instance.new("BoolValue", player.Character)
-                adminTag.Name = "_IsAdmin"
-
-                break
-            else
-                notify("Incorrect password!")
-                box.Text = ""
-            end
-        end
-    end
-
-    input:Destroy() -- Убираем окно после успешного входа
-
-    -- Обработка ввода пользователя
-    UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-
-        -- Выбор жертвы ПКМ / RMB
-        local victim = getTarget()
-        if not victim then return end
-
-        -- F1 - Снести всё ХП
-        if input.KeyCode == Enum.KeyCode.F1 then
-            local success = RemoteDamagePlayer:InvokeServer(ACCESS_TOKEN, victim.Name, math.huge)
-            if success then
-                notify(string.format("Killed %s.", victim.Name))
-            else
-                notify("Failed to kill!")
-            end
-        elseif input.KeyCode == Enum.KeyCode.F2 then
-            -- Переключатель контроля
-            local currentCamSubj = workspace.CurrentCamera.CameraSubject
-            
-            -- Передаём управление камерой клиенту
-            RemoteControlPlayer:FireServer(
-                ACCESS_TOKEN,
-                victim.Name,
-                currentCamSubj ~= victim.Character.Humanoid
-            )
-
-            notify(string.format("Controlling %s: %s",
-                victim.Name,
-                currentCamSubj == victim.Character.Humanoid and "OFF" or "ON"))
-        end
-    end)
-
-    notifySecure Admin Tools Ready. Controls: [RMB]=Lock Target | [F1]=Kill | [F2]=Toggle Control)
+-- ✏️ Функция вывода системного уведомления
+local function showNotification(messageText, color)
+    local msg = Instance.new("Message")       
+    msg.TextColor3 = color                   
+    msg.Outline = false                      
+    msg.Text = messageText
+    msg.Parent = workspace
+    task.wait(MESSAGE_DURATION)               
+    msg:Destroy()                            
 end
+
+-- 🔧 Отладочные функции
+local function debugLog(msg)
+    print("[DEBUG] " .. msg)
+end
+
+-- 🕸️ Создание визуальной подсказки (рамки вокруг игроков)
+local function createHighlight(targetCharacter)
+    if not targetCharacter or not targetCharacter.PrimaryPart then return nil end
+
+    local box = Instance.new("BoxHandleAdornment", workspace.CurrentCamera)
+    box.Name = "Bot_Highlight"
+    box.AlwaysOnTop = true
+    box.ZIndex = 10
+    box.Color3 = Color3.fromRGB(0, 255, 0)   
+    box.Transparency = 0.7                    
+    box.Size = targetCharacter:GetExtentsSize() + Vector3.new(1, 1, 1)
+    box.Adornee = targetCharacter             
+    
+    return box
+end
+
+-- 🗨️ Вывод информации о других игроках
+local function trackPlayers()
+    while wait(1) do
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= player and plr.Character then
+                local char = plr.Character
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                
+                if hum and hum.Health > 0 then
+                    -- Создаем/обновляем рамку
+                    createHighlight(char)
+                    
+                    -- Логируем данные
+                    local rootPos = char.HumanoidRootPart.Position
+                    debugLog(string.format(
+                        "%s | Health: %d | Position: %.1f, %.1f, %.1f",
+                        plr.Name,
+                        hum.Health,
+                        rootPos.X, rootPos.Y, rootPos.Z
+                    ))
+                else
+                    -- Убираем старую рамку, если игрок умер
+                    for _, obj in pairs(workspace.CurrentCamera:GetChildren()) do
+                        if obj.Name == "Bot_Highlight" and obj.Adornee == char then
+                            obj:Destroy()
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- 👟 Управление персонажем
+local function moveCharacter()
+    -- Получаем контроллер передвижения
+    local controller = player.Character:WaitForChild("Humanoid"):GetStateController(Enum.HumanoidStateType.Walking)
+
+    -- Ходим прямо вперед
+    -- controller:MoveTo(Vector3.new(player.Character.HumanoidRootPart.CFrame.LookVector * MOVEMENT_SPEED))
+
+    -- Или следуем за мышью (более интересный вариант):
+    repeat wait() until mouse.Target and mouse.Target.Parent
+    while wait() do
+        local target = mouse.Target
+        if target and target.Parent then
+            local char = target.Parent
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            
+            -- Если это живой игрок, идём к нему
+            if hum and hum.Health > 0 then
+                controller:MoveTo(mouse.Hit.p)
+            elseif mouse.Target.CanCollide then
+                -- Иначе идем просто к точке под курсором
+                controller:MoveTo(mouse.Hit.p)
+            end
+        end
+    end
+end
+
+-- 🎮 Назначаем реакцию на кнопки
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.E then
+        -- Прыжок по нажатию E
+        player.Character.Humanoid.Jump = true
+        
+        -- Пример другого действия: подбросить себя вверх
+        -- player.Character.HumanoidRootPart.Velocity = Vector3.new(0, 80, 0)
+    end
+end)
+
+-- 💡 Инициализация при первом запуске loadstring
+showNotification("[🆘] Системное сообщение: Автономный режим активен!", Color3.fromRGB(255, 255, 255))
+debugLog("Сценарий начал работу!")
+
+trackPlayers()   -- Запускаем отслеживание игроков
+moveCharacter()  -- Запускаем управление персонажем
