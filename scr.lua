@@ -1,40 +1,44 @@
--- Auto-Execute Profiler.lua (Safe Simulator & Refactor)
---
--- Безопасная и улучшенная версия профайлера для локальной разработки.
--- ВАЖНО: НИКАКИХ вызовов FireServer/InvokeServer не производится.
--- Этот скрипт собирает RemoteEvent/RemoteFunction, генерирует тестовые полезные нагрузки
--- и симулирует отправку, выдавая детализированный отчёт. Подходит для отладки и разработки
--- без воздействия на других игроков.
+-- Auto-Execute Profiler v2.0: Real Server Calls & Safe Mode
 
 local function Init()
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local RunService = game:GetService("RunService")
-    local UserInputService = game:GetService("UserInputService")
+    local UserInputService = game.GetService(game, "UserInputService") -- Защита от nil
 
-    local player = Players.LocalPlayer
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait() 
     if not player then return end
 
     local mouse = player:GetMouse and player:GetMouse()
 
     -- === STATE ===
+    -- ⚙️⚙️ НАСТРОЙКИ БЕЗОПАСНОСТИ ⚙️⚙️
+    -- Если true - скрипт НЕ отправляет ничего на сервер. Только анализирует.
+    -- ЕСЛИ FALSE — РЕАЛЬНЫЕ вызовы FireServer/InvokeServer.
+    local isSafeMode = false -- <--- РАБОЧИЙ РЕЖИМ ВКЛЮЧЕН!
+
     local Victim = nil              -- {Char=Model, Hum=Humanoid, Name=string}
-    local BestRemoteInfo = nil      -- {remote=Instance, payload=payload, dmg=number}
+    local BestWeaponInfo = nil      -- {remote=Instance, payload=payload, dmg=number}
     local MaxSimulatedDamage = -1
     local isProfiling = false
     local profileQueue = {}         -- {remote=Instance, payload=payload}
     local lastKnownHealth = 0
     local hl = nil
 
+    local ATTACK_COOLDOWN = 0.7     -- Минимальная пауза между ударами
+    local LastAttackTime = tick()   
+
     local function notify(text)
         pcall(function()
-            game.StarterGui:SetCore("SendNotification", {Title = "[AutoExec-Sim]", Text = tostring(text), Duration = 3})
+            game.StarterGui:SetCore("SendNotification", {
+                Title = "[Profiler]",
+                Text = tostring(text),
+                Duration = 3})
         end)
-        -- also print for console visibility
-        print("[AutoExec-Sim] " .. tostring(text))
+        print("" .. tostring(text))
     end
 
-    -- Safe target detection
+    -- Безопасная проверка цели под курсором
     local function getTarget()
         if not mouse then return nil end
         local targetPart = mouse.Target
@@ -42,33 +46,27 @@ local function Init()
         local model = targetPart:FindFirstAncestorWhichIsA("Model")
         if not model then return nil end
         local hum = model:FindFirstChildOfClass("Humanoid")
-        local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
+        local root = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
         if hum and hum.Health > 0 and model ~= (player.Character or player.CharacterAdded:Wait()) and root then
-            return {Char = model, Hum = hum, Name = model.Name}
+            return {Char = model, Hum = hum, Root = root, Name = model.Name}
         end
         return nil
     end
 
-    -- Standardized payload representation
+    -- Стандартные тестовые полезности (Payloads)
     -- payload = { args = {...}, isTableSingleArg = boolean, desc = string }
     local function generatePayloads(targetName, targetHum)
         local t = {}
-        -- (name, amount)
-        table.insert(t, {args = {targetName, 9999}, isTableSingleArg = false, desc = "(name, number)"})
-        -- pass Humanoid
-        table.insert(t, {args = {targetHum}, isTableSingleArg = false, desc = "(Humanoid)"})
-        -- single table with fields
-        table.insert(t, {args = {{Victim = targetName, Damage = 9999, Part = (targetHum and targetHum.RootPart)}}, isTableSingleArg = true, desc = "{Victim=..,Damage=..,Part=..}"})
-        -- map-like single table
-        table.insert(t, {args = {{{player = player, enemy = targetName, dmg = math.huge}}}, isTableSingleArg = true, desc = "{player=..,enemy=..,dmg=..}"})
-        -- simple string
-        table.insert(t, {args = {"GodWeapon_Debug"}, isTableSingleArg = false, desc = "(string)"})
-        -- just the name
-        table.insert(t, {args = {targetName}, isTableSingleArg = false, desc = "(name)"})
+        table.insert(t, {args = {targetName, 9999}, isTableSingleArg = false, desc = "(name, number)"})          -- Common damage format
+        table.insert(t, {args = {targetHum}, isTableSingleArg = false, desc = "(Humanoid)"})                     -- Passing Humanoid directly
+        table.insert(t, {args = {{Victim = targetName, Damage = math.huge, Part = targetHum.RootPart}}, isTableSingleArg = true, desc = "{Victim=..,Damage=..,Part=..}"}) -- Table with fields
+        table.insert(t, {args = {{{player = player, enemy = targetName, dmg = math.huge}}}, isTableSingleArg = true, desc = "{{player=..,enemy=..,dmg=..}}"}) -- Nested map-like table
+        table.insert(t, {args = {"GodWeapon_Debug"}, isTableSingleArg = false, desc = "(string)"})                 -- Debug strings
+        table.insert(t, {args = {targetName}, isTableSingleArg = false, desc = "(name only)"})                    -- Just name
         return t
     end
 
-    -- Collect remotes safely (don't call them)
+    -- Сбор всех удалённых объектов в игре
     local function collectRemotes()
         local remotes = {}
         local function scan(container)
@@ -78,108 +76,90 @@ local function Init()
                 end
             end
         end
-        local ok, err = pcall(function()
-            scan(ReplicatedStorage)
-            scan(workspace)
-            if ReplicatedStorage:FindFirstChild("Remotes") then scan(ReplicatedStorage.Remotes) end
-            if workspace:FindFirstChild("Remotes") then scan(workspace.Remotes) end
-        end)
-        if not ok then
-            warn("collectRemotes error:", err)
+        -- Standard places
+        scan(ReplicatedStorage)
+        scan(workspace)
+        -- Special folders
+        if ReplicatedStorage:FindFirstChild("Remotes") then scan(ReplicatedStorage.Remotes) end
+        if workspace:FindFirstChild("Remotes") then scan(workspace.Remotes) end
+        if workspace:FindFirstChild("_REMOTES") then scan(workspace._REMOTES) end
+        -- Inside players' weapons/models
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Character then
+                for _, tool in ipairs(plr.Character:GetChildren()) do
+                    if tool:IsA("Tool") or tool.Name == "Weapon" then
+                        scan(tool)
+                    end
+                end
+            end
         end
         return remotes
     end
 
-    -- Deterministic simulated damage calculator
-    -- Uses remote name and payload description to produce reproducible numbers
-    local function simulatedDamageFor(remote, payload)
-        local name = tostring(remote and remote.Name or "<nil>")
-        local s = name .. "|" .. (payload and tostring(payload.desc) or "<nil>")
-        local hash = 0
-        for i = 1, #s do
-            hash = (hash * 31 + string.byte(s, i)) % 1000000007
-        end
-        -- map to a range (0..100) for simulated damage
-        local dmg = (hash % 120) -- up to 119
-        -- give larger values to payloads that include numbers like 9999 or math.huge
-        for _, v in ipairs(payload.args) do
-            if type(v) == "number" and (v >= 1000 or v == math.huge) then
-                dmg = dmg + 50
-                break
-            end
-        end
-        return dmg
-    end
-
-    -- Profiling worker: consumes profileQueue and simulates results
+    -- Профилирование worker: потребляет очередь profileQueue и выполняет тесты
     task.spawn(function()
-        while true do
+        while wait() do
             if isProfiling and #profileQueue > 0 and Victim and Victim.Hum and Victim.Hum.Health > 0 then
                 local job = table.remove(profileQueue, 1)
-                if not job or not job.remote or not job.payload then
-                    task.wait(0.05)
-                    goto continue
+                if not job or not job.remote or not job.payload then goto continue end
+
+                local before = Victim.Hum.Health or 0
+
+                -- Реальный вызов на сервер (если не в безопасном режиме)
+                if not isSafeMode then
+                    local success, err
+                    if job.remote.ClassName == "RemoteEvent" then
+                        if job.payload.isTableSingleArg then
+                            success, err = pcall(job.remote.FireServer, job.remote, unpack(job.payload.args)[1])
+                        else
+                            success, err = pcall(job.remote.FireServer, job.remote, unpack(job.payload.args))
+                        end
+                    elseif job.remote.ClassName == "RemoteFunction" then
+                        if job.payload.isTableSingleArg then
+                            success, err = pcall(job.remote.InvokeServer, job.remote, unpack(job.payload.args)[1])
+                        else
+                            success, err = pcall(job.remote.InvokeServer, job.remote, unpack(job.payload.args))
+                        end
+                    end
+                    if not success then warn("Call error:", err) end
                 end
 
-                local before = Victim.Hum and Victim.Hum.Health or 0
+                -- Ждём один кадр, чтобы увидеть изменение ХП от этого события
+                RunService.RenderStepped:Wait()
 
-                -- Instead of calling server, we simulate a call and its effect
-                local dmg = simulatedDamageFor(job.remote, job.payload)
+                -- Смотрим результат
+                local delta = before - (Victim.Hum.Health or 0)
+                if delta <= 0 then goto continue end
 
-                -- Log the simulated call
-                print(string.format("[SIM] Remote=%s Type=%s Payload=%s SimDamage=%d",
-                    tostring(job.remote:GetFullName()), job.remote.ClassName, job.payload.desc, dmg))
-
-                -- Update best simulated result
-                if dmg > MaxSimulatedDamage then
-                    MaxSimulatedDamage = dmg
-                    BestRemoteInfo = {remote = job.remote, payload = job.payload, dmg = dmg}
-                    notify("New best simulated: " .. tostring(job.remote.Name) .. " dmg=" .. tostring(dmg))
+                -- Update best result
+                if delta > MaxSimulatedDamage then
+                    MaxSimulatedDamage = delta
+                    BestWeaponInfo = {remote = job.remote, payload = job.payload, dmg = delta}
+                    notify(string.format("New best weapon found! %s (%d HP)", job.remote.Name, delta))
                 end
 
-                -- artificial wait to mimic network/server processing
-                task.wait(0.12)
+                ::continue::
 
-                -- when queue finishes, stop profiling automatically
+                -- Когда очередь тестов заканчивается, профайлинг завершается автоматически
                 if #profileQueue == 0 then
                     isProfiling = false
-                    if BestRemoteInfo then
-                        notify("Profiling complete. Best simulated damage=" .. tostring(BestRemoteInfo.dmg) .. " (" .. tostring(BestRemoteInfo.remote.Name) .. ")")
+                    if BestWeaponInfo then
+                        notify(string.format(
+                            "%s Scanning complete. Best weapon=%s Dmg=%d",
+                            isSafeMode and "[SAFE MODE]" or "",
+                            BestWeaponInfo.remote.Name,
+                            BestWeaponInfo.dmg))
                     else
-                        notify("Profiling complete. No simulated damage detected.")
+                        notify(isSafeMode and "[SAFE MODE] No simulated damage detected." or "No damage detected.")
                     end
                 end
             else
                 task.wait(0.08)
             end
-            ::continue::
         end
     end)
 
-    -- Auto-behaviour (visual only) — no auto-firing for safety
-    task.spawn(function()
-        while true do
-            if Victim and BestRemoteInfo and not isProfiling then
-                local vHum = Victim.Hum
-                if vHum and vHum.Health > 0 then
-                    -- detect health drop and log it (do not call the server)
-                    if lastKnownHealth > 0 and vHum.Health < lastKnownHealth then
-                        print(string.format("[SIM-AUTO] Detected health drop for %s: %s -> %s (no server calls made)", Victim.Name, tostring(lastKnownHealth), tostring(vHum.Health)))
-                        notify("Health drop detected on " .. Victim.Name .. " — simulated response available: " .. tostring(BestRemoteInfo.dmg))
-                    end
-                    lastKnownHealth = vHum.Health
-                else
-                    Victim = nil
-                    lastKnownHealth = 0
-                end
-            else
-                if not Victim then lastKnownHealth = 0 end
-            end
-            task.wait(0.06)
-        end
-    end)
-
-    -- Input handling: F1 start profiling (simulation), F2 stop, T toggle highlight, X manual simulated shot
+    -- Input handling: F1 start profiling, F2 stop, T toggle highlight, X manual shot
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
         if input.KeyCode == Enum.KeyCode.F1 then
@@ -190,7 +170,7 @@ local function Init()
                 isProfiling = true
                 profileQueue = {}
                 MaxSimulatedDamage = -1
-                BestRemoteInfo = nil
+                BestWeaponInfo = nil
 
                 local remotes = collectRemotes()
                 local payloads = generatePayloads(Victim.Name, Victim.Hum)
@@ -201,7 +181,13 @@ local function Init()
                     end
                 end
 
-                notify("[SIM] Scanning " .. Victim.Name .. " with " .. tostring(#remotes) .. " remotes and " .. tostring(#payloads) .. " payloads each (" .. tostring(#profileQueue) .. " tests)")
+                notify(string.format(
+                    "%s Scanning %s with %d remotes and %d payloads each (%d tests)",
+                    isSafeMode and "[SAFE MODE]" or "",
+                    Victim.Name,
+                    #remotes,
+                    #payloads,
+                    #profileQueue))
             else
                 notify("No valid target under cursor for profiling.")
             end
@@ -229,15 +215,53 @@ local function Init()
                 end
             end
         elseif input.KeyCode == Enum.KeyCode.X then
-            local t = getTarget()
-            if t and BestRemoteInfo then
-                -- Simulate a manual shot using the best found simulated remote
-                local dmg = BestRemoteInfo.dmg or simulatedDamageFor(BestRemoteInfo.remote, BestRemoteInfo.payload)
-                notify("Manual simulated shot at " .. t.Name .. " (sim dmg=" .. tostring(dmg) .. ")")
-                print(string.format("[SIM-MANUAL] Would have called %s with payload %s — sim damage=%s",
-                    tostring(BestRemoteInfo.remote:GetFullName()), BestRemoteInfo.payload.desc, tostring(dmg)))
+            -- Manual real shot at the victim
+            if not Victim then
+                Victim = getTarget()
+                if not Victim then
+                    notify("No valid target selected.")
+                    return
+                end
+            end
+
+            if BestWeaponInfo then
+                local now = tick()
+                if now - LastAttackTime < ATTACK_COOLDOWN then
+                    notify(string.format("Cooldown active %.1f sec", ATTACK_COOLDOWN - (now - LastAttackTime)))
+                    return
+                end
+
+                LastAttackTime = now
+
+                -- Вызов на сервер
+                if not isSafeMode then
+                    local remote = BestWeaponInfo.remote
+                    local payload = BestWeaponInfo.payload
+                    local success, err
+                    if remote.ClassName == "RemoteEvent" then
+                        if payload.isTableSingleArg then
+                            success, err = pcall(remote.FireServer, remote, unpack(payload.args)[1])
+                        else
+                            success, err = pcall(remote.FireServer, remote, unpack(payload.args))
+                        end
+                    elseif remote.ClassName == "RemoteFunction" then
+                        if payload.isTableSingleArg then
+                            success, err = pcall(remote.InvokeServer, remote, unpack(payload.args)[1])
+                        else
+                            success, err = pcall(remote.InvokeServer, remote, unpack(payload.args))
+                        end
+                    end
+                    if not success then
+                        warn("Manual call error:", err)
+                        notify("Error sending packet!")
+                    else
+                        notify(string.format("Shot fired via %s | Payload=%s", remote.Name, payload.desc))
+                    end
+                else
+                    notify("In SAFE MODE. No packets are sent.")
+                end
             else
-                notify("No best simulated weapon available or no valid target.")
+                notify("No best weapon available yet. Profile a target first.")
             end
         end
     end)
@@ -247,18 +271,17 @@ local function Init()
         if Victim and Victim.Hum and Victim.Hum.Health > 0 then
             if not hl then
                 hl = Instance.new("BoxHandleAdornment")
-                hl.Name = "AutoExecSim_Highlight"
+                hl.Name = "AutoExec_Highlight"
                 hl.Parent = workspace.CurrentCamera
                 hl.AlwaysOnTop = true
                 hl.ZIndex = 10
                 hl.Transparency = 0.6
-                hl.Size = Vector3.new(1,1,1)
                 hl.Adornee = Victim.Char
             end
             if hl and Victim.Char then
-                local success, extents = pcall(function() return Victim.Char:GetExtentsSize() end)
-                if success and extents then
-                    hl.Size = extents + Vector3.new(0.2, 0.2, 0.2)
+                local extents = pcall(function() return Victim.Char:GetExtentsSize() + Vector3.new(0.2, 0.2, 0.2) end)
+                if extents then
+                    hl.Size = extents
                 end
                 hl.Color3 = Color3.fromRGB(0, 200, 0)
                 hl.Adornee = Victim.Char
@@ -271,7 +294,7 @@ local function Init()
         end
     end)
 
-    notify("[AutoExec-Sim] Ready. Controls: [F1]=Profile (sim) | [F2]=Stop | [T]=Toggle Highlight | [X]=Manual Sim Shot")
+    notifyProfiler loaded. Controls: [F1]=Profile | [F2]=Stop | [T]=Toggle Highlight | [X]=Manual Shot")
 end
 
 pcall(Init)
