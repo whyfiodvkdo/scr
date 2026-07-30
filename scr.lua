@@ -38,7 +38,7 @@ local manualTargetSetTime = 0
 
 -- Метки/подсветки
 local highlights = {}
-local specialMark = nil -- таблица {gui=..., target=Character}
+local specialMark = nil -- таблица {gui=..., label=..., target=Character}
 
 -- КД по цифрам
 local lastKeyUse = {} -- lastKeyUse[1..6] = timestamp
@@ -166,7 +166,7 @@ local function playerFromDescendant(desc)
     return nil
 end
 
--- Симуляция "нажатия" цифровой клавиши (1..6) с КД
+-- Эмуляция "нажатия" цифровой клавиши (1..6) с КД
 local function simulateKeyAction(keyNumber)
     if keyNumber < 1 or keyNumber > 6 then return end
     local now = os.clock()
@@ -272,6 +272,26 @@ local function safeMoveTo(humanoid, position, timeout)
     return reached
 end
 
+-- Управляющие функции
+local function clearManualTarget()
+    manualTarget = nil
+    manualTargetSetTime = 0
+    clearSpecialMark()
+    showNotification("Цель", "Ручная цель очищена (бот)")
+    debugLog("manualTarget cleared")
+end
+
+local function setManualTarget(char)
+    if not char or not char.Parent then return false end
+    manualTarget = char
+    manualTargetSetTime = os.clock()
+    attackMode = "manual"
+    createSpecialMark(manualTarget)
+    showNotification("Авто-цель", "Назначена цель: " .. (Players:GetPlayerFromCharacter(char) and Players:GetPlayerFromCharacter(char).Name or "Unknown"), 3)
+    debugLog("manual target set")
+    return true
+end
+
 -- moveAI: учитывает botEnabled; движение/поиск цели/избегание
 local function moveAI()
     task.spawn(function()
@@ -295,7 +315,6 @@ local function moveAI()
                 -- Если цель умерла — очистить
                 if manualTarget and (not manualTarget.Parent or (manualTarget:FindFirstChildOfClass("Humanoid") and manualTarget:FindFirstChildOfClass("Humanoid").Health <= 0)) then
                     clearManualTarget()
-                    clearSpecialMark()
                 end
 
                 local bestTargetChar = nil
@@ -438,12 +457,8 @@ local function autoController()
                                 end
                             end
                             if bestChar then
-                                manualTarget = bestChar
-                                manualTargetSetTime = now
-                                attackMode = "manual"
-                                createSpecialMark(manualTarget)
-                                showNotification("Авто-цель", "Назначена цель: " .. (Players:GetPlayerFromCharacter(bestChar) and Players:GetPlayerFromCharacter(bestChar).Name or "Unknown"), 3)
-                                debugLog("autoController: new manualTarget set")
+                                setManualTarget(bestChar)
+                                lastSelection = now
                             end
                         end
                     end
@@ -453,8 +468,7 @@ local function autoController()
                 if botEnabled and manualTarget and manualTarget.Parent and (now - lastAction) >= AUTO_ACTION_INTERVAL then
                     lastAction = now
                     -- если цель в зоне атаки - атакуем (performLocalAttackIfInRange)
-                    performLocalAttackIfInRange()
-                    -- если цель вне зоны, moveAI будет идти к ней
+                    pcall(performLocalAttackIfInRange)
                 end
 
                 -- если цель просрочена по времени — очистить ее (и special mark)
@@ -470,20 +484,23 @@ local function autoController()
     end)
 end
 
--- Обработка ввода: только F для включить/выключить бота (не меняем подсветку/режим атаки при этом)
+-- Обработка ввода: только G для включить/выключить бота (не меняем подсветку/режим атаки при этом)
 local function setupInput()
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         if input.UserInputType == Enum.UserInputType.Keyboard then
-            if input.KeyCode == Enum.KeyCode.F then
+            if input.KeyCode == Enum.KeyCode.G then
                 botEnabled = not botEnabled
                 showNotification("Бот", botEnabled and "Включён" or "Выключен")
                 debugLog("botEnabled -> " .. tostring(botEnabled))
-                -- при отключении бот не изменяет highlightsEnabled или attackMode — они сохраняются
+                -- при переключении очищаем/сбрасываем временные счётчики, чтобы не вызвать ошибки
                 if not botEnabled then
-                    -- при выключении прекращаем атаки/действия; оставляем manualTarget и метку (по желанию можно очистить)
+                    -- при отключении бот прекращает движение/атаки; не трогаем подсветку/режим
                     debugLog("Бот отключён: автоконтроль и движение приостановлены")
                 else
+                    -- при включении сбрасываем lastAction/lastSelection, чтобы избежать мгновенных повторов
+                    for i=1,6 do lastKeyUse[i] = lastKeyUse[i] or 0 end
+                    manualTargetSetTime = manualTarget and os.clock() or 0
                     debugLog("Бот включён: автоконтроль и движение возобновлены")
                 end
             end
@@ -492,7 +509,7 @@ local function setupInput()
 end
 
 -- Инициализация
-showNotification("Автономный режим", "Сценарий активирован. Нажмите F для вкл/выкл бота.", MESSAGE_DURATION)
+showNotification("Автономный режим", "Сценарий активирован. Нажмите G для вкл/выкл бота.", MESSAGE_DURATION)
 debugLog("Сценарий начал работу!")
 
 -- wait for character (не останавливаем все циклы при отсутствии персонажа)
