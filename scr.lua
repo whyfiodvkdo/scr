@@ -2,7 +2,7 @@
 local MESSAGE_DURATION = 3     -- Время отображения сообщений (секунды)
 local MOVEMENT_SPEED = 16      -- Базовая скорость движения
 local ATTACK_RANGE = 8        -- Радиус ближнего боя
-local AVOIDANCE_DISTANCE = 3   -- Минимальное расстояние до стен
+local AVOIDANCE_DISTANCE = 4   -- Минимальное расстояние до стен
 
 -- 🛡️ Защита от повторного запуска
 if script.Parent then return end
@@ -87,7 +87,8 @@ local function trackWorld()
         for _, part in ipairs(workspace:GetDescendants()) do
             if part.Name == "Heal" and part.CanCollide then
                 -- Запоминаем позицию аптечки
-                debugLog(string.format("Найдена аптечка: %.1f, %.1f, %.1f", part.Position.X, part.Position.Y, part.Position.Z))
+                debugLog(string.format("Найдена аптечка: %.1f, %.1f, %.1f", 
+                                      part.Position.X, part.Position.Y, part.Position.Z))
                 -- Здесь можно добавить логику поиска пути к ней при низком HP
             end
         end
@@ -96,8 +97,27 @@ end
 
 -- 👟 Управление персонажем (ИИ)
 local function moveAI()
-    -- Получаем контроллер передвижения
-    local controller = player.Character:WaitForChild("Humanoid"):GetStateController(Enum.HumanoidStateType.Walking)
+    -- Получение контроллера передвижения (исправленная и надёжная версия!)
+    repeat wait() until player.Character
+    
+    local humanoid = player.Character:WaitForChild("Humanoid", 5)
+    if not humanoid then 
+        error("[ERROR]: Персонаж не появился за отведённое время!")
+    end
+
+    local controller = humanoid:GetStateController(Enum.HumanoidStateType.Walking)
+    if not controller then 
+        warn("[DEBUG] Не удалось найти StateController! Бот будет двигаться напрямую.")
+        
+        -- Резервный метод управления движением (на случай старых версий движка)
+        controller = {
+            MoveTo = function(pos)
+                humanoid.MoveTo(humanoid, pos)
+            end
+        }
+    else
+        debugLog("Контроллер движения найден.")
+    end
 
     -- Основной цикл принятия решений
     while wait(0.1) do
@@ -112,7 +132,7 @@ local function moveAI()
         
         if result and result.Instance.CanCollide then
             -- Стена впереди, идём вправо
-            controller:MoveTo(Vector3.new(result.Normal.X, 0, -result.Normal.Z).Unit * MOVEMENT_SPEED)
+            controller.MoveTo(Vector3.new(result.Normal.X, 0, -result.Normal.Z).Unit * MOVEMENT_SPEED)
         else
             -- Шаг 2: Выбор цели
             local bestTarget = nil
@@ -139,15 +159,15 @@ local function moveAI()
             if bestTarget then
                 if closestDistance <= ATTACK_RANGE then
                     -- Мы в зоне атаки, останавливаемся
-                    controller:MoveTo(player.Character.HumanoidRootPart.Position)
+                    controller.MoveTo(player.Character.HumanoidRootPart.Position)
                     -- Здесь можно добавить анимацию удара
                 else
                     -- Идём к цели
-                    controller:MoveTo(bestTarget.HumanoidRootPart.Position)
+                    controller.MoveTo(bestTarget.HumanoidRootPart.Position)
                 end
             else
                 -- Если целей нет, идём вперёд
-                controller:MoveTo(player.Character.HumanoidRootPart.CFrame.LookVector * MOVEMENT_SPEED)
+                controller.MoveTo(player.Character.HumanoidRootPart.CFrame.LookVector * MOVEMENT_SPEED)
             end
         end
     end
