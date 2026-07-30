@@ -11,7 +11,6 @@ if script.Parent then return end
 local UserInputService = game.GamepadService or game.UserScript or game.GetService("UserInputService")
 local Players = game.Players
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 
 -- ✏️ Функция вывода системного уведомления
 local function showNotification(messageText, color)
@@ -46,7 +45,7 @@ local function createHighlight(targetCharacter, color)
 end
 
 -- 🗨️ Сбор информации о мире
-local function trackWorld()
+local function trackWorld(mouse)
     while wait(1) do
         -- Анализируем игроков
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -96,29 +95,7 @@ local function trackWorld()
 end
 
 -- 👟 Управление персонажем (ИИ)
-local function moveAI()
-    -- Получение контроллера передвижения (исправленная и надёжная версия!)
-    repeat wait() until player.Character
-    
-    local humanoid = player.Character:WaitForChild("Humanoid", 5)
-    if not humanoid then 
-        error("[ERROR]: Персонаж не появился за отведённое время!")
-    end
-
-    local controller = humanoid:GetStateController(Enum.HumanoidStateType.Walking)
-    if not controller then 
-        warn("[DEBUG] Не удалось найти StateController! Бот будет двигаться напрямую.")
-        
-        -- Резервный метод управления движением (на случай старых версий движка)
-        controller = {
-            MoveTo = function(pos)
-                humanoid.MoveTo(humanoid, pos)
-            end
-        }
-    else
-        debugLog("Контроллер движения найден.")
-    end
-
+local function moveAI(controller, mouse)
     -- Основной цикл принятия решений
     while wait(0.1) do
         -- Шаг 1: Избегание столкновений со стенами
@@ -177,5 +154,31 @@ end
 showNotification("[🆘] Системное сообщение: Автономный режим активен!", Color3.fromRGB(255, 255, 255))
 debugLog("Сценарий начал работу!")
 
-trackWorld()   -- Запускаем отслеживание мира
-moveAI()       -- Запускаем искусственный интеллект
+-- 🔄 Ожидание появления Character перед началом работы
+repeat wait() until player.Character
+
+-- Получение контроллера передвижения
+local humanoid = player.Character:WaitForChild("Humanoid", 5)
+if not humanoid then 
+    error("[ERROR]: Персонаж не появился за отведённое время!")
+end
+
+local controller = humanoid:GetStateController(Enum.HumanoidStateType.Walking)
+if not controller then 
+    warn("[DEBUG] Не удалось найти StateController! Бот будет двигаться напрямую.")
+    
+    -- Резервный метод управления движением (на случай старых версий движка)
+    controller = {
+        MoveTo = function(pos)
+            humanoid.MoveTo(humanoid, pos)
+        end
+    }
+else
+    debugLog("Контроллер движения найден.")
+end
+
+-- Теперь, когда Character точно существует, получаем мышь
+local mouse = player:GetMouse()
+
+trackWorld(mouse)   -- Запускаем отслеживание мира
+moveAI(controller, mouse)       -- Запускаем искусственный интеллект
