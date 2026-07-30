@@ -3,8 +3,6 @@ local MESSAGE_DURATION = 3     -- Время отображения сообще
 local MOVEMENT_SPEED = 50      -- Скорость полёта
 local HOVER_HEIGHT = 8        -- Высота зависания над точкой под курсом
 
--- 🛡️ Защита от повторного запуска
-if script.Parent then return end
 
 -- 🖥️ Подключение к сервисам Roblox (исправлено!)
 local Players = game.Players
