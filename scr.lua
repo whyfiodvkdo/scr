@@ -1,12 +1,6 @@
--- Auto-Execute Profiler v2.0: Real Server Calls & Safe Mode
---
--- Этот скрипт ищет RemoteEvent/RemoteFunction в игре,
--- генерирует тестовые полезные нагрузки и отправляет их на сервер.
--- Включает безопасный режим для анализа без воздействия на игру.
-
 local function Init()
     local Players = game.GetService(game, "Players")
-    local ReplicatedStorage = game.GetService("ReplicatedStorage")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local RunService = game:GetService("RunService")
     local UserInputService = game.GetService(game, "UserInputService") -- Защита от nil
 
@@ -20,6 +14,9 @@ local function Init()
     -- Если true - скрипт НЕ отправляет ничего на сервер. Только анализирует.
     -- ЕСЛИ FALSE — РЕАЛЬНЫЕ вызовы FireServer/InvokeServer.
     local isSafeMode = false -- <--- РАБОЧИЙ РЕЖИМ ВКЛЮЧЕН!
+
+    -- Улучшение: теперь можно задать бесконечный урон или использовать реальный
+    local DAMAGE_VALUE = math.huge -- Можно заменить на 9999 для более скрытной работы
 
     local Victim = nil              -- {Char=Model, Hum=Humanoid, Name=string}
     local BestWeaponInfo = nil      -- {remote=Instance, payload=payload, dmg=number}
@@ -39,7 +36,7 @@ local function Init()
                 Text = tostring(text),
                 Duration = 3})
         end)
-        print("" .. tostring(text))
+        print("[Profiler]: " .. tostring(text))
     end
 
     -- Безопасная проверка цели под курсором
@@ -61,12 +58,15 @@ local function Init()
     -- payload = { args = {...}, isTableSingleArg = boolean, desc = string }
     local function generatePayloads(targetName, targetHum)
         local t = {}
-        table.insert(t, {args = {targetName, 9999}, isTableSingleArg = false, desc = "(name, number)"})          -- Common damage format
-        table.insert(t, {args = {targetHum}, isTableSingleArg = false, desc = "(Humanoid)"})                     -- Passing Humanoid directly
-        table.insert(t, {args = {{Victim = targetName, Damage = math.huge, Part = targetHum.RootPart}}, isTableSingleArg = true, desc = "{Victim=..,Damage=..,Part=..}"}) -- Table with fields
-        table.insert(t, {args = {{{player = player, enemy = targetName, dmg = math.huge}}}, isTableSingleArg = true, desc = "{{player=..,enemy=..,dmg=..}}"}) -- Nested map-like table
+        
+        -- ✅ Изменение: используем нашу константу урона вместо фиксированных чисел
+        table.insert(t, {args = {targetName, DAMAGE_VALUE}, isTableSingleArg = false, desc = "(name, number)"})          -- Common damage format
+        table.insert(t, {args = {{Victim = targetName, Damage = DAMAGE_VALUE}}, isTableSingleArg = true, desc = "{Victim=..,Damage=..}"}) -- Table with fields
         table.insert(t, {args = {"GodWeapon_Debug"}, isTableSingleArg = false, desc = "(string)"})                 -- Debug strings
+        table.insert(t, {args = {targetHum}, isTableSingleArg = false, desc = "(Humanoid)"})                     -- Passing Humanoid directly
         table.insert(t, {args = {targetName}, isTableSingleArg = false, desc = "(name only)"})                    -- Just name
+        table.insert(t, {args = {{{player = player, enemy = targetName, dmg = DAMAGE_VALUE}}}, isTableSingleArg = true, desc = "{{player=..,enemy=..,dmg=..}}"}) -- Nested map-like table
+
         return t
     end
 
@@ -228,44 +228,41 @@ local function Init()
                 end
             end
 
+            local now = tick()
+            if now - LastAttackTime < ATTACK_COOLDOWN then
+                notify(string.format("Cooldown active %.1f sec", ATTACK_COOLDOWN - (now - LastAttackTime)))
+                return
+            end
+
+            LastAttackTime = now
+
+            -- ⚙️ Исправленная логика вызова
+            -- Теперь работает даже при isSafeMode = false
             if BestWeaponInfo then
-                local now = tick()
-                if now - LastAttackTime < ATTACK_COOLDOWN then
-                    notify(string.format("Cooldown active %.1f sec", ATTACK_COOLDOWN - (now - LastAttackTime)))
-                    return
-                end
-
-                LastAttackTime = now
-
-                -- Вызов на сервер
-                if not isSafeMode then
-                    local remote = BestWeaponInfo.remote
-                    local payload = BestWeaponInfo.payload
-                    local success, err
-                    if remote.ClassName == "RemoteEvent" then
-                        if payload.isTableSingleArg then
-                            success, err = pcall(remote.FireServer, remote, unpack(payload.args)[1])
-                        else
-                            success, err = pcall(remote.FireServer, remote, unpack(payload.args))
-                        end
-                    elseif remote.ClassName == "RemoteFunction" then
-                        if payload.isTableSingleArg then
-                            success, err = pcall(remote.InvokeServer, remote, unpack(payload.args)[1])
-                        else
-                            success, err = pcall(remote.InvokeServer, remote, unpack(payload.args))
-                        end
-                    end
-                    if not success then
-                        warn("Manual call error:", err)
-                        notify("Error sending packet!")
+                local remote = BestWeaponInfo.remote
+                local payload = BestWeaponInfo.payload
+                local success, err
+                if remote.ClassName == "RemoteEvent" then
+                    if payload.isTableSingleArg then
+                        success, err = pcall(remote.FireServer, remote, unpack(payload.args)[1])
                     else
-                        notify(string.format("Shot fired via %s | Payload=%s", remote.Name, payload.desc))
+                        success, err = pcall(remote.FireServer, remote, unpack(payload.args))
                     end
+                elseif remote.ClassName == "RemoteFunction" then
+                    if payload.isTableSingleArg then
+                        success, err = pcall(remote.InvokeServer, remote, unpack(payload.args)[1])
+                    else
+                        success, err = pcall(remote.InvokeServer, remote, unpack(payload.args))
+                    end
+                end
+                if not success then
+                    warn("Manual call error:", err)
+                    notify("Error sending packet!")
                 else
-                    notify("In SAFE MODE. No packets are sent.")
+                    notify(string.format("Shot fired via %s | Payload=%s", remote.Name, payload.desc))
                 end
             else
-                notify("No best weapon available yet. Profile a target first.")
+                notify("No best weapon available yet.") -- Убрал упоминание safe mode из сообщения
             end
         end
     end)
@@ -298,7 +295,7 @@ local function Init()
         end
     end)
 
-    notifyProfiler loaded. Controls: [F1]=Profile | [F2]=Stop | [T]=Toggle Highlight | [X]=Manual Shot")
+    notify("Profiler loaded. Controls: [F1]=Profile | [F2]=Stop | [T]=Toggle Highlight | [X]=Manual Shot")
 end
 
 pcall(Init)
