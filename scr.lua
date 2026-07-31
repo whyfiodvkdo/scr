@@ -1,45 +1,88 @@
+-- Улучшённый Profiler для Remotes
+-- Controls: F1=Profile | F2=Stop | F3=Toggle SafeMode | T=Toggle Highlight/Target | X=Manual Shot
+
 local function Init()
-    local Players = game.GetService(game, "Players")
+    -- Services
+    local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local RunService = game:GetService("RunService")
-    local UserInputService = game.GetService(game, "UserInputService") -- Защита от nil
+    local UserInputService = game:GetService("UserInputService")
+    local Workspace = game:GetService("Workspace")
+    local StarterGui = game:GetService("StarterGui")
 
-    local player = Players.LocalPlayer or Players.PlayerAdded:Wait() 
+    -- Player & input
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
     if not player then return end
-
     local mouse = player:GetMouse and player:GetMouse()
 
-    -- === STATE ===
-    -- ⚙️⚙️ НАСТРОЙКИ БЕЗОПАСНОСТИ ⚙️⚙️
-    -- Если true - скрипт НЕ отправляет ничего на сервер. Только анализирует.
-    -- ЕСЛИ FALSE — РЕАЛЬНЫЕ вызовы FireServer/InvokeServer.
-    local isSafeMode = false -- <--- РАБОЧИЙ РЕЖИМ ВКЛЮЧЕН!
+    -- ========== CONFIG ==========
+    local isSafeMode = false            -- true: только анализ, без реальных вызовов
+    local DAMAGE_VALUE = math.huge     -- можно заменить на число
+    local ATTACK_COOLDOWN = 0.7
+    -- ============================
 
-    -- Улучшение: теперь можно задать бесконечный урон или использовать реальный
-    local DAMAGE_VALUE = math.huge -- Можно заменить на 9999 для более скрытной работы
-
-    local Victim = nil              -- {Char=Model, Hum=Humanoid, Name=string}
-    local BestWeaponInfo = nil      -- {remote=Instance, payload=payload, dmg=number}
+    -- State
+    local Victim = nil                 -- {Char=Model, Hum=Humanoid, Root=BasePart, Name=string}
+    local BestWeaponInfo = nil         -- {remote=Instance, payload=payload, dmg=number}
     local MaxSimulatedDamage = -1
     local isProfiling = false
-    local profileQueue = {}         -- {remote=Instance, payload=payload}
+    local profileQueue = {}            -- очередь тестов {remote, payload}
     local lastKnownHealth = 0
     local hl = nil
+    local LastAttackTime = 0
 
-    local ATTACK_COOLDOWN = 0.7     -- Минимальная пауза между ударами
-    local LastAttackTime = tick()   
-
+    -- Utils
     local function notify(text)
         pcall(function()
-            game.StarterGui:SetCore("SendNotification", {
+            StarterGui:SetCore("SendNotification", {
                 Title = "[Profiler]",
                 Text = tostring(text),
-                Duration = 3})
+                Duration = 3
+            })
         end)
         print("[Profiler]: " .. tostring(text))
     end
 
-    -- Безопасная проверка цели под курсором
+    local function safeToString(x)
+        if type(x) == "string" then return x end
+        if typeof and typeof(x) == "Instance" then return x.Name or tostring(x) end
+        return tostring(x)
+    end
+
+    -- Надёжная функция вызова удалённых методов (учёт safe mode)
+    local function callRemote(remote, payload)
+        if not remote then return false, "no remote" end
+        local args = payload.args or {}
+        -- если safe mode — не вызываем, но возвращаем как "успех" для симуляции
+        if isSafeMode then
+            return true, "[SAFE_MODE]"
+        end
+
+        local ok, err
+        if remote.ClassName == "RemoteEvent" then
+            ok, err = pcall(function()
+                if payload.isTableSingleArg then
+                    remote:FireServer(args[1])
+                else
+                    remote:FireServer(table.unpack(args))
+                end
+            end)
+        elseif remote.ClassName == "RemoteFunction" then
+            ok, err = pcall(function()
+                if payload.isTableSingleArg then
+                    remote:InvokeServer(args[1])
+                else
+                    remote:InvokeServer(table.unpack(args))
+                end
+            end)
+        else
+            return false, "unsupported remote type: " .. tostring(remote.ClassName)
+        end
+
+        if ok then return true, nil else return false, err end
+    end
+
+    -- Целевая модель под курсором (корректно возвращаем Root part)
     local function getTarget()
         if not mouse then return nil end
         local targetPart = mouse.Target
@@ -47,111 +90,110 @@ local function Init()
         local model = targetPart:FindFirstAncestorWhichIsA("Model")
         if not model then return nil end
         local hum = model:FindFirstChildOfClass("Humanoid")
-        local root = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
-        if hum and hum.Health > 0 and model ~= (player.Character or player.CharacterAdded:Wait()) and root then
+        local root = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or targetPart
+        if hum and hum.Health and hum.Health > 0 and model ~= (player.Character or player.CharacterAdded:Wait()) and root and root:IsA("BasePart") then
             return {Char = model, Hum = hum, Root = root, Name = model.Name}
         end
         return nil
     end
 
-    -- Стандартные тестовые полезности (Payloads)
-    -- payload = { args = {...}, isTableSingleArg = boolean, desc = string }
+    -- Генерация payloads (используем DAMAGE_VALUE)
     local function generatePayloads(targetName, targetHum)
         local t = {}
-        
-        -- ✅ Изменение: используем нашу константу урона вместо фиксированных чисел
-        table.insert(t, {args = {targetName, DAMAGE_VALUE}, isTableSingleArg = false, desc = "(name, number)"})          -- Common damage format
-        table.insert(t, {args = {{Victim = targetName, Damage = DAMAGE_VALUE}}, isTableSingleArg = true, desc = "{Victim=..,Damage=..}"}) -- Table with fields
-        table.insert(t, {args = {"GodWeapon_Debug"}, isTableSingleArg = false, desc = "(string)"})                 -- Debug strings
-        table.insert(t, {args = {targetHum}, isTableSingleArg = false, desc = "(Humanoid)"})                     -- Passing Humanoid directly
-        table.insert(t, {args = {targetName}, isTableSingleArg = false, desc = "(name only)"})                    -- Just name
-        table.insert(t, {args = {{{player = player, enemy = targetName, dmg = DAMAGE_VALUE}}}, isTableSingleArg = true, desc = "{{player=..,enemy=..,dmg=..}}"}) -- Nested map-like table
-
+        table.insert(t, {args = {targetName, DAMAGE_VALUE}, isTableSingleArg = false, desc = "(name, number)"})
+        table.insert(t, {args = {{Victim = targetName, Damage = DAMAGE_VALUE}}, isTableSingleArg = true, desc = "{Victim=..,Damage=..}"})
+        table.insert(t, {args = {"GodWeapon_Debug"}, isTableSingleArg = false, desc = "(string)"})
+        table.insert(t, {args = {targetHum}, isTableSingleArg = false, desc = "(Humanoid)"})
+        table.insert(t, {args = {targetName}, isTableSingleArg = false, desc = "(name only)"})
+        table.insert(t, {args = {{{player = player, enemy = targetName, dmg = DAMAGE_VALUE}}}, isTableSingleArg = true, desc = "{{player=..,enemy=..,dmg=..}}"})
         return t
     end
 
-    -- Сбор всех удалённых объектов в игре
+    -- Собираем RemoteEvent / RemoteFunction в указанных местах, с дедупликацией
     local function collectRemotes()
         local remotes = {}
-        local function scan(container)
-            for _, obj in pairs(container:GetDescendants()) do
-                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+        local seen = {}
+        local function add(obj)
+            if not obj or not obj:IsA then return end
+            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                if not seen[obj] then
+                    seen[obj] = true
                     table.insert(remotes, obj)
                 end
             end
         end
-        -- Standard places
+        local function scan(container)
+            if not container then return end
+            for _, obj in ipairs(container:GetDescendants()) do
+                add(obj)
+            end
+        end
+
+        -- Common locations
         scan(ReplicatedStorage)
-        scan(workspace)
-        -- Special folders
+        scan(Workspace)
         if ReplicatedStorage:FindFirstChild("Remotes") then scan(ReplicatedStorage.Remotes) end
-        if workspace:FindFirstChild("Remotes") then scan(workspace.Remotes) end
-        if workspace:FindFirstChild("_REMOTES") then scan(workspace._REMOTES) end
-        -- Inside players' weapons/models
+        if Workspace:FindFirstChild("Remotes") then scan(Workspace.Remotes) end
+        if Workspace:FindFirstChild("_REMOTES") then scan(Workspace._REMOTES) end
+
+        -- Weapons/tools in players' characters
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr.Character then
-                for _, tool in ipairs(plr.Character:GetChildren()) do
-                    if tool:IsA("Tool") or string.find(tool.Name, "Weapon", 1, true) then
-                        scan(tool)
+                for _, child in ipairs(plr.Character:GetChildren()) do
+                    if child:IsA("Tool") or (type(child.Name) == "string" and string.find(child.Name, "Weapon", 1, true)) then
+                        scan(child)
                     end
                 end
             end
         end
+
         return remotes
     end
 
-    -- Профилирование worker: потребляет очередь profileQueue и выполняет тесты
+    -- Обновление BestWeaponInfo при успешном уроне
+    local function considerResult(remote, payload, delta)
+        if delta <= 0 then return end
+        if delta > MaxSimulatedDamage then
+            MaxSimulatedDamage = delta
+            BestWeaponInfo = {remote = remote, payload = payload, dmg = delta}
+            notify(string.format("New best weapon: %s (dmg=%d)", safeToString(remote.Name or remote), delta))
+        end
+    end
+
+    -- Профайлер: потребляет очередь profileQueue
     task.spawn(function()
-        while wait() do
+        while true do
             if isProfiling and #profileQueue > 0 and Victim and Victim.Hum and Victim.Hum.Health > 0 then
                 local job = table.remove(profileQueue, 1)
-                if not job or not job.remote or not job.payload then goto continue end
-
-                local before = Victim.Hum.Health or 0
-
-                -- Реальный вызов на сервер (если не в безопасном режиме)
-                if not isSafeMode then
-                    local success, err
-                    if job.remote.ClassName == "RemoteEvent" then
-                        if job.payload.isTableSingleArg then
-                            success, err = pcall(job.remote.FireServer, job.remote, unpack(job.payload.args)[1])
-                        else
-                            success, err = pcall(job.remote.FireServer, job.remote, unpack(job.payload.args))
-                        end
-                    elseif job.remote.ClassName == "RemoteFunction" then
-                        if job.payload.isTableSingleArg then
-                            success, err = pcall(job.remote.InvokeServer, job.remote, unpack(job.payload.args)[1])
-                        else
-                            success, err = pcall(job.remote.InvokeServer, job.remote, unpack(job.payload.args))
-                        end
+                if not job or not job.remote or not job.payload then
+                    -- skip
+                else
+                    local before = Victim.Hum.Health or 0
+                    -- Выполняем вызов (если not safeMode, callRemote сделает pcall)
+                    local ok, err = callRemote(job.remote, job.payload)
+                    if not ok and err then
+                        warn("Remote call error:", err)
                     end
-                    if not success then warn("Call error:", err) end
+
+                    -- Небольшая пауза, даём серверу обработать (несколько кадров надежнее)
+                    -- Ждём рендер/heartbeat несколько раз, чтобы изменения успели примениться
+                    for i=1,2 do
+                        RunService.Heartbeat:Wait()
+                    end
+
+                    local after = Victim.Hum and Victim.Hum.Health or 0
+                    local delta = before - after
+                    if delta > 0 then
+                        considerResult(job.remote, job.payload, delta)
+                    end
                 end
 
-                -- Ждём один кадр, чтобы увидеть изменение ХП от этого события
-                RunService.RenderStepped:Wait()
-
-                -- Смотрим результат
-                local delta = before - (Victim.Hum.Health or 0)
-                if delta <= 0 then goto continue end
-
-                -- Update best result
-                if delta > MaxSimulatedDamage then
-                    MaxSimulatedDamage = delta
-                    BestWeaponInfo = {remote = job.remote, payload = job.payload, dmg = delta}
-                    notify(string.format("New best weapon found! %s (%d HP)", job.remote.Name, delta))
-                end
-
-                ::continue::
-
-                -- Когда очередь тестов заканчивается, профайлинг завершается автоматически
                 if #profileQueue == 0 then
                     isProfiling = false
                     if BestWeaponInfo then
-                        notify(string.format(
-                            "%s Scanning complete. Best weapon=%s Dmg=%d",
-                            isSafeMode and "[SAFE MODE]" or "",
-                            BestWeaponInfo.remote.Name,
+                        notify(string.format("%sScanning complete. Best=%s Dmg=%d",
+                            isSafeMode and "[SAFE MODE] " or "",
+                            safeToString(BestWeaponInfo.remote.Name or BestWeaponInfo.remote),
                             BestWeaponInfo.dmg))
                     else
                         notify(isSafeMode and "[SAFE MODE] No simulated damage detected." or "No damage detected.")
@@ -163,39 +205,41 @@ local function Init()
         end
     end)
 
-    -- Input handling: F1 start profiling, F2 stop, T toggle highlight, X manual shot
+    -- Обработка ввода
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
-        if input.KeyCode == Enum.KeyCode.F1 then
+        local key = input.KeyCode
+
+        if key == Enum.KeyCode.F1 then
             local t = getTarget()
-            if t then
-                Victim = t
-                lastKnownHealth = t.Hum.Health
-                isProfiling = true
-                profileQueue = {}
-                MaxSimulatedDamage = -1
-                BestWeaponInfo = nil
-
-                local remotes = collectRemotes()
-                local payloads = generatePayloads(Victim.Name, Victim.Hum)
-
-                for _, r in ipairs(remotes) do
-                    for _, p in ipairs(payloads) do
-                        table.insert(profileQueue, {remote = r, payload = p})
-                    end
-                end
-
-                notify(string.format(
-                    "%s Scanning %s with %d remotes and %d payloads each (%d tests)",
-                    isSafeMode and "[SAFE MODE]" or "",
-                    Victim.Name,
-                    #remotes,
-                    #payloads,
-                    #profileQueue))
-            else
+            if not t then
                 notify("No valid target under cursor for profiling.")
+                return
             end
-        elseif input.KeyCode == Enum.KeyCode.F2 then
+
+            Victim = t
+            lastKnownHealth = t.Hum.Health or 0
+            isProfiling = true
+            profileQueue = {}
+            MaxSimulatedDamage = -1
+            BestWeaponInfo = nil
+
+            local remotes = collectRemotes()
+            local payloads = generatePayloads(Victim.Name, Victim.Hum)
+
+            for _, r in ipairs(remotes) do
+                for _, p in ipairs(payloads) do
+                    table.insert(profileQueue, {remote = r, payload = p})
+                end
+            end
+
+            notify(string.format("%sScanning %s: %d remotes × %d payloads = %d tests",
+                isSafeMode and "[SAFE MODE] " or "",
+                Victim.Name,
+                #remotes,
+                #payloads,
+                #profileQueue))
+        elseif key == Enum.KeyCode.F2 then
             if isProfiling then
                 isProfiling = false
                 profileQueue = {}
@@ -203,8 +247,10 @@ local function Init()
             else
                 notify("Profiling is not running.")
             end
-        elseif input.KeyCode == Enum.KeyCode.T then
-            -- Toggle highlight of current target
+        elseif key == Enum.KeyCode.F3 then
+            isSafeMode = not isSafeMode
+            notify("Safe mode " .. (isSafeMode and "enabled" or "disabled"))
+        elseif key == Enum.KeyCode.T then
             if Victim then
                 Victim = nil
                 notify("Highlight disabled.")
@@ -212,14 +258,14 @@ local function Init()
                 local t = getTarget()
                 if t then
                     Victim = t
-                    lastKnownHeight = t.Hum.Health
+                    lastKnownHealth = t.Hum.Health or 0
                     notify("Highlight enabled on " .. t.Name)
                 else
                     notify("No valid target under cursor.")
                 end
             end
-        elseif input.KeyCode == Enum.KeyCode.X then
-            -- Manual real shot at the victim
+        elseif key == Enum.KeyCode.X then
+            -- Manual shot
             if not Victim then
                 Victim = getTarget()
                 if not Victim then
@@ -233,59 +279,45 @@ local function Init()
                 notify(string.format("Cooldown active %.1f sec", ATTACK_COOLDOWN - (now - LastAttackTime)))
                 return
             end
-
             LastAttackTime = now
 
-            -- ⚙️ Исправленная логика вызова
-            -- Теперь работает даже при isSafeMode = false
             if BestWeaponInfo then
-                local remote = BestWeaponInfo.remote
-                local payload = BestWeaponInfo.payload
-                local success, err
-                if remote.ClassName == "RemoteEvent" then
-                    if payload.isTableSingleArg then
-                        success, err = pcall(remote.FireServer, remote, unpack(payload.args)[1])
-                    else
-                        success, err = pcall(remote.FireServer, remote, unpack(payload.args))
-                    end
-                elseif remote.ClassName == "RemoteFunction" then
-                    if payload.isTableSingleArg then
-                        success, err = pcall(remote.InvokeServer, remote, unpack(payload.args)[1])
-                    else
-                        success, err = pcall(remote.InvokeServer, remote, unpack(payload.args))
-                    end
-                end
-                if not success then
+                local ok, err = callRemote(BestWeaponInfo.remote, BestWeaponInfo.payload)
+                if not ok then
+                    notify("Error sending packet: " .. tostring(err))
                     warn("Manual call error:", err)
-                    notify("Error sending packet!")
                 else
-                    notify(string.format("Shot fired via %s | Payload=%s", remote.Name, payload.desc))
+                    notify(string.format("Shot fired via %s | Payload=%s",
+                        safeToString(BestWeaponInfo.remote.Name or BestWeaponInfo.remote),
+                        BestWeaponInfo.payload.desc or ""))
                 end
             else
-                notify("No best weapon available yet.") -- Убрал упоминание safe mode из сообщения
+                notify("No best weapon available yet.")
             end
         end
     end)
 
-    -- Visualization: BoxHandleAdornment highlighting
+    -- Визуализация подсветки: BoxHandleAdornment
     RunService.RenderStepped:Connect(function()
-        if Victim and Victim.Hum and Victim.Hum.Health > 0 then
+        if Victim and Victim.Hum and Victim.Hum.Health > 0 and Victim.Root and Victim.Root:IsA("BasePart") then
             if not hl then
                 hl = Instance.new("BoxHandleAdornment")
                 hl.Name = "AutoExec_Highlight"
-                hl.Parent = workspace.CurrentCamera
+                hl.Parent = Workspace.CurrentCamera or Workspace
                 hl.AlwaysOnTop = true
                 hl.ZIndex = 10
                 hl.Transparency = 0.6
-                hl.Adornee = Victim.Char
-            end
-            if hl and Victim.Char then
-                local extents = pcall(function() return Victim.Char:GetExtentsSize() + Vector3.new(0.2, 0.2, 0.2) end)
-                if extents then
-                    hl.Size = extents
-                end
+                hl.Adornee = Victim.Root
+                hl.Size = Victim.Root.Size + Vector3.new(0.2, 0.2, 0.2)
                 hl.Color3 = Color3.fromRGB(0, 200, 0)
-                hl.Adornee = Victim.Char
+            else
+                pcall(function()
+                    if Victim.Root then
+                        hl.Adornee = Victim.Root
+                        hl.Size = Victim.Root.Size + Vector3.new(0.2, 0.2, 0.2)
+                        hl.Color3 = Color3.fromRGB(0, 200, 0)
+                    end
+                end)
             end
         else
             if hl then
@@ -295,7 +327,7 @@ local function Init()
         end
     end)
 
-    notify("Profiler loaded. Controls: [F1]=Profile | [F2]=Stop | [T]=Toggle Highlight | [X]=Manual Shot")
+    notify("Profiler loaded. Controls: [F1]=Profile | [F2]=Stop | [F3]=Toggle SafeMode | [T]=Toggle Highlight | [X]=Manual Shot")
 end
 
 pcall(Init)
