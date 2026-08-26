@@ -1,95 +1,78 @@
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local player = game.Players.LocalPlayer
-local starterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService('UserInputService')
+local RunService = game:GetService('RunService')
+local Players = game.Players
+local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local starterGui = game:GetService('StarterGui')
 
--- Переменная для сохранения начальной позиции
-local originalPosition = nil
+-- ⚙️ Ключевая переменная: теперь она отвечает за состояние полёта
+local isFlying = false
 
-local isActive = false
-local isScriptDisabled = false
-
-starterGui:SetCore("SendNotification", {
-    Title = "Phase",
-    Text = "Controls:\n- Ctrl + K: Toggle\n- Alt + K: Fully Stop",
-    Duration = 5
+starterGui:SetCore('SendNotification', {
+	Title = 'Phase',
+	Text = 'Controls:\n- Ctrl + K: Toggle\n- Alt + K: Fully Stop',
+	Duration = 5,
 })
 
 local function getCharacter()
-    return player.Character or player.CharacterAdded:Wait()
+	return player.Character or player.CharacterAdded:Wait()
 end
 
 local function showNotification(message)
-    starterGui:SetCore("SendMicroNotification", message) -- Используем Micro для краткости
+	starterGui:SetCore('SendMicroNotification', message) 
 end
 
-local function toggleNoClip()
-    local character = getCharacter()
-    if not character then return end
+-- ⚙️ Функция переключения состояния полёта
+local function toggleFlyMode()
+	local character = getCharacter()
+	if not character then return end
 
-    isActive = not isActive
-    showNotification(isActive and "🚫 Enabled!" or "🛑 Disabled!")
+	isFlying = not isFlying
+	showNotification(isFlying and "🚫 Flying!" or "🛑 Landed!")
 
-    -- Сохраняем позицию только при первом запуске
-    if not originalPosition then
-        originalPosition = character.PrimaryPart.Position
-    end
-
-    if isActive then
-        -- Подключаем обработчик смерти
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            humanoid.Died:Connect(function() disableScript() end)
-        end
-
-        -- Включаем режим
-        RunService.Stepped:Connect(function()
-            for _, part in pairs(character:GetChildren()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                end
-            end
-        end)
-    else
-        -- ⚙️ Мгновенное восстановление коллизий
-        for _, part in pairs(character:GetChildren()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = true
-            end
-        end
-
-        -- ⚙️ Микро-телепорт для исправления физики
-        -- Мы поднимаем персонажа на 0.1 единицы и сразу опускаем обратно
-        -- Это заставляет движок правильно рассчитать коллизии
-        character.PrimaryPart.CFrame = CFrame.new(originalPosition.X, originalPosition.Y + 0.1, originalPosition.Z)
-        wait(0.01)
-        character.PrimaryPart.CFrame = CFrame.new(originalPosition)
-    end
+	-- Микро-телепорт для корректного выхода из объектов
+	if not isFlying then
+		local root = character.PrimaryPart
+		root.CFrame = CFrame.new(root.Position.X, root.Position.Y + 0.1, root.Position.Z)
+		wait(0.01)
+		root.CFrame = CFrame.new(root.Position)
+	end
 end
 
 local function disableScript()
-    isScriptDisabled = true
-    isActive = false
-
-    local character = getCharacter()
-    if character then
-        for _, part in pairs(character:GetChildren()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = true
-            end
-        end
-    end
-
-    showNotification("🔴 Script fully closed successfully!")
+	isFlying = false
+	player.CharacterAdded:Disconnect() -- Очистим старые коннекты
+	showNotification("🔴 Script fully closed successfully!")
 end
 
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
+-- ⚙️ Главный цикл обработки коллизий
+RunService.RenderStepped:Connect(function()
+	local char = getCharacter()
+	if not char then return end
 
-    -- ⚙️ Теперь срабатывает моментально, без задержки canToggle
-    if input.KeyCode == Enum.KeyCode.K and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-        toggleNoClip()
-    elseif input.KeyCode == Enum.KeyCode.K and UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) then
-        disableScript()
-    end
+	local hum = char:FindFirstChildOfClass('Humanoid')
+	if not hum then return end
+
+	-- Включаем коллизию ВСЕГДА, если мы не находимся в состоянии полёта ИЛИ стоим на земле
+	for _, part in ipairs(char:GetDescendants()) do
+		if part.ClassName == 'BasePart' then
+			part.CanCollide = not (isFlying or hum.MoveDirection.Magnitude > 0.1)
+		end
+	end
+end)
+
+-- ⚙️ Обработчик смерти
+player.CharacterAdded:Connect(function()
+	task.wait(0.5) -- Ждём загрузки нового чара
+	toggleFlyMode() -- Выключаем режим при респауне
+end)
+
+-- ⚙️ Горячие клавиши
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe then return end
+
+	if input.KeyCode == Enum.KeyCode.K and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+		toggleFlyMode()
+	elseif input.KeyCode == Enum.KeyCode.K and UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) then
+		disableScript()
+	end
 end)
