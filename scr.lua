@@ -12,18 +12,19 @@ UIS.InputEnded:Connect(function(inputObject)
 		if keyCode == Enum.KeyCode.V then
 			isInvisible = not isInvisible -- Переключаем состояние
 
-			for _, child in ipairs(player.Character or {}) do
+			for _, child in ipairs(player.Character or {}) do -- Используем правильный цикл
 				if child.ClassName == 'Accessory' or child.Name == 'HumanoidRootPart' then
 					child.RenderingState = if isInvisible then 1 else 0
 				end
 			end
 
-			-- Обрабатываем части тела
+			-- Обрабатываем части тела через анимационные треки
 			local humanoidDesc = player.Character and player.Character:FindFirstChildOfClass('Humanoid')
 			if humanoidDesc then
-				humanoidDesc:GetAppliedAnimationTrackClips():forEach(function(trackClip)
-					trackClip.HumanoidObject.RenderingState = if isInvisible then 1 else 0
-				end)
+				for i = 1, #humanoidDesc.AnimationTrackClips do -- Перебираем массив по индексам
+					humanoidDesc.AnimationTrackClips[i].HumanoidObject.RenderingState =
+						if isInvisible then 1 else 0
+				end
 			end
 		end
 	end
